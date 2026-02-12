@@ -152,7 +152,13 @@ const MOVE_DATA = {
     "Teleport": { bp: 0, type: "Psychic", cat: "Status", priority: -6, acc: 100, flags: ["pivot"], effect: "Switches out (last)" },
     "Trick": { bp: 0, type: "Psychic", cat: "Status", priority: 0, acc: 100, flags: [], effect: "Swaps items" },
     "Seismic Toss": { bp: 0, type: "Fighting", cat: "Physical", priority: 0, acc: 100, flags: ["contact"], effect: "Deals damage = level" },
-    "Transform": { bp: 0, type: "Normal", cat: "Status", priority: 0, acc: 100, flags: [], effect: "Copies target" }
+    "Transform": { bp: 0, type: "Normal", cat: "Status", priority: 0, acc: 100, flags: [], effect: "Copies target" },
+    "Meteor Beam": { bp: 120, type: "Rock", cat: "Special", priority: 0, acc: 90, flags: ["setup"], effect: "Charges turn 1, +1 SpA" },
+    "Leech Life": { bp: 80, type: "Bug", cat: "Physical", priority: 0, acc: 100, flags: ["contact", "recovery"], effect: "Heals 50% damage" },
+    "Leaf Storm": { bp: 130, type: "Grass", cat: "Special", priority: 0, acc: 90, flags: [], effect: "Lowers user SpA -2" },
+    "Gunk Shot": { bp: 120, type: "Poison", cat: "Physical", priority: 0, acc: 80, flags: [], effect: "30% poison" },
+    "Tera Blast": { bp: 80, type: "Normal", cat: "Special", priority: 0, acc: 100, flags: [], effect: "Changes type to Tera Type" },
+    "Substitute": { bp: 0, type: "Normal", cat: "Status", priority: 0, acc: 100, flags: ["setup"], effect: "Create substitute using 25% HP" }
 };
 
 /**
@@ -167,7 +173,18 @@ function lookupMove(name) {
     for (const key of Object.keys(MOVE_DATA)) {
         if (key.toLowerCase() === lower) return { name: key, ...MOVE_DATA[key] };
     }
-    return null;
+
+    // Return a dummy object if not found
+    return {
+        name: cleaned,
+        bp: 0,
+        type: 'Normal',
+        cat: 'Status',
+        priority: 0,
+        acc: 100,
+        flags: [],
+        isUnknown: true
+    };
 }
 
 /**
