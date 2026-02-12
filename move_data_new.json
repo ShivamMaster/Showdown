@@ -1,4 +1,4 @@
-const MOVE_DATA = {
+{
     "Absorb": {
         "bp": 20,
         "type": "Grass",
@@ -8349,11 +8349,4 @@ const MOVE_DATA = {
         "acc": 100,
         "flags": []
     }
-};
-
-function lookupMove(name) {
-    if (!name) return null;
-    return MOVE_DATA[name] || null;
 }
-
-if (typeof module !== 'undefined') module.exports = { MOVE_DATA, lookupMove };

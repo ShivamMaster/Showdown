@@ -10,7 +10,7 @@
     'use strict';
 
     const POLL_INTERVAL = 2000;    // ms between battle detection polls
-    const UPDATE_DEBOUNCE = 500;   // ms debounce for state updates
+    const UPDATE_DEBOUNCE = 100;   // ms debounce for state updates
     let initialized = false;
     let updateTimer = null;
     let pollTimer = null;
@@ -21,11 +21,14 @@
      * Check if we're currently in a battle room
      */
     function isBattleActive() {
-        return !!(
+        const hasBattle = !!(
             document.querySelector('.battle') ||
             document.querySelector('.battle-log') ||
-            document.querySelector('.innerbattle')
+            document.querySelector('.innerbattle') ||
+            document.querySelector('.playbutton') === null && document.querySelector('.battle-controls')
         );
+        if (hasBattle) console.log('[ShowdownPredictor] Battle container detected');
+        return hasBattle;
     }
 
     /**

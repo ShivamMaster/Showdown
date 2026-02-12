@@ -17,6 +17,8 @@ const ShowdownScraper = (() => {
         opponentTeam: {},   // same structure
         myActive: null,     // name of active Pokémon
         opponentActive: null,
+        myName: null,       // Player's name
+        opponentName: null, // Opponent's name
         field: {
             weather: null,      // 'Sun', 'Rain', 'Sand', 'Snow', 'Hail', null
             terrain: null,      // 'Electric', 'Grassy', 'Psychic', 'Misty', null
@@ -46,9 +48,19 @@ const ShowdownScraper = (() => {
         if (!text || text.trim() === '') return;
         const line = text.trim();
 
-        // Strict textual check for opponent actions
-        // Showdown consistently prefixes opponent actions with "The opposing "
-        const isOpposingAction = line.includes('The opposing');
+        // 1. Determine side using player names if known
+        let isOpposingAction = line.includes('The opposing');
+        
+        // If we know player names, use them as primary source of truth
+        if (state.myName && state.opponentName) {
+            // Case-insensitive match for player names in log
+            const myNameLower = state.myName.toLowerCase();
+            const oppNameLower = state.opponentName.toLowerCase();
+            const lineLower = line.toLowerCase();
+            
+            if (lineLower.startsWith(oppNameLower)) isOpposingAction = true;
+            else if (lineLower.startsWith(myNameLower)) isOpposingAction = false;
+        }
 
         // Turn number
         const turnMatch = line.match(/^Turn (\d+)/);
@@ -57,16 +69,29 @@ const ShowdownScraper = (() => {
             return;
         }
 
-        // Move usage: "PlayerName's Pokémon used Move!"
-        // Or in Showdown format: "The opposing Pokémon used Move!" / "Pokémon used Move!"
+        // Move usage: "PlayerName's Pokémon used Move!" or "The opposing Pokémon used Move!"
         const moveMatch = line.match(/(?:The opposing )?(.+?) used (.+?)!/);
         if (moveMatch) {
-            const pokemonName = cleanPokemonName(moveMatch[1]);
-            const moveName = moveMatch[2].trim();
-            // Strict logic: If line says 'The opposing', it is opponent. Otherwise, it is mine.
-            const isOpponent = isOpposingAction;
+            let rawName = moveMatch[1];
+            
+            // AGGRESSIVE: If it starts with "The opposing", it is 100% the opponent.
+            if (line.startsWith('The opposing ')) isOpposingAction = true;
 
-            if (isOpponent) {
+            // Handle "PlayerName's Pokemon" format
+            if (rawName.includes("'s ")) {
+                const parts = rawName.split("'s ");
+                const playerName = parts[0].trim();
+                rawName = parts[1];
+                if (state.opponentName && playerName === state.opponentName) isOpposingAction = true;
+                if (state.myName && playerName === state.myName) isOpposingAction = false;
+            }
+
+            const pokemonName = cleanPokemonName(rawName);
+            if (!pokemonName || pokemonName === 'Tera Type') return;
+
+            const moveName = moveMatch[2].trim();
+            
+            if (isOpposingAction) {
                 addMoveToTeam(state.opponentTeam, pokemonName, moveName);
             } else {
                 addMoveToTeam(state.myTeam, pokemonName, moveName);
@@ -75,9 +100,9 @@ const ShowdownScraper = (() => {
         }
 
         // Switch Logic:
-        // "Go! X!" -> User (Live Battle Standard)
-        // "PlayerName sent out X!" -> Opponent (Usually, unless Replay)
-        // "The opposing X came out!" -> Opponent
+        // "Go! X!" -> User
+        // "PlayerName sent out X!"
+        // "The opposing X came out!"
 
         // 1. User Switch: "Go! [Pokemon]!"
         const goMatch = line.match(/^Go! (.+?)!/);
@@ -85,18 +110,31 @@ const ShowdownScraper = (() => {
             const name = cleanPokemonName(goMatch[1]);
             state.myActive = name;
             ensureTeamMember(state.myTeam, name);
-            // If we found a "Go!" match, we stop processing this line for switches
             return;
         }
 
-        // 2. Opponent Switch: "The opposing [Pokemon] came out!" or "PlayerName sent out [Pokemon]!"
-        // Note: We treat "sent out" as opponent because User sees "Go!".
-        // Exception: "User sent out X!" in some niche formats? Unlikely in standard live play.
-        const oppSentMatch = line.match(/.*?sent out (.+?)!/);
-        const cameOutMatch = line.match(/(?:The opposing )(.+?)(?:\scame out| appeared)/);
+        // 2. Named Switch: "PlayerName sent out [Pokemon]!"
+        const sentOutMatch = line.match(/(.+?) sent out (.+?)!/);
+        if (sentOutMatch) {
+            const playerName = sentOutMatch[1].trim();
+            const pokemonName = cleanPokemonName(sentOutMatch[2]);
+            const isOpp = (state.opponentName && playerName === state.opponentName) || 
+                         (state.myName && playerName !== state.myName);
+            
+            if (isOpp) {
+                state.opponentActive = pokemonName;
+                ensureTeamMember(state.opponentTeam, pokemonName);
+            } else {
+                state.myActive = pokemonName;
+                ensureTeamMember(state.myTeam, pokemonName);
+            }
+            return;
+        }
 
-        if (oppSentMatch || cameOutMatch) {
-            const name = cleanPokemonName(oppSentMatch ? oppSentMatch[1] : cameOutMatch[1]);
+        // 3. Generic Opponent Switch: "The opposing [Pokemon] came out!"
+        const cameOutMatch = line.match(/The opposing (.+?) (?:came out|appeared)/);
+        if (cameOutMatch) {
+            const name = cleanPokemonName(cameOutMatch[1]);
             state.opponentActive = name;
             ensureTeamMember(state.opponentTeam, name);
             return;
@@ -110,6 +148,19 @@ const ShowdownScraper = (() => {
             const team = isOpposingAction ? state.opponentTeam : state.myTeam;
             if (team[name]) {
                 team[name].hp = Math.max(0, team[name].hp - pct);
+            }
+        }
+
+        // Terastalization: "[Pokemon] terastallized to the [Type] type!"
+        const teraMatch = line.match(/(?:The opposing )?(.+?) terastallized to the (.+?) type!/);
+        if (teraMatch) {
+            const name = cleanPokemonName(teraMatch[1]);
+            const type = teraMatch[2].trim();
+            const team = isOpposingAction ? state.opponentTeam : state.myTeam;
+            if (team[name]) {
+                team[name].teraType = type;
+                team[name].isTerastallized = true;
+                console.log(`[ShowdownPredictor] Scraper: Recorded Terastalization for ${name} to ${type}`);
             }
         }
 
@@ -260,22 +311,49 @@ const ShowdownScraper = (() => {
 
     function cleanPokemonName(name) {
         if (!name) return '';
-        // 1. Normalize whitespace (tabs, newlines, non-breaking spaces) to single space
-        let cleaned = name.replace(/[\n\t\r\u00a0]/g, ' ').trim();
+        
+        // AGGRESSIVE: If the name contains UI markers, it's NOT a Pokemon name
+        if (name.includes('Tera Type') || name.includes('Ability:') || name.includes('Item:') || name.includes('Stats:')) {
+            return '';
+        }
 
-        // 2. Remove gender symbols
+        // 1. Remove common Showdown prefixes/suffixes from tooltips/logs
+        let cleaned = name.trim();
+        cleaned = cleaned.replace(/^[Tt]he opposing /, '');
+        cleaned = cleaned.replace(/^[Pp]layer\s\d+'s\s/, '');
+        
+        // 2. Strip Level (e.g., "Cobalion L80" -> "Cobalion")
+        // Match space followed by L and digits at the end of a word or string
+        cleaned = cleaned.replace(/\sL\d+\b/g, '');
+        
+        // 3. Strip Gender icons (♂, ♀)
         cleaned = cleaned.replace(/[♂♀]/g, '');
 
-        // 3. Remove nickname formatting (parentheses) BEFORE level suffix
-        // This is critical because "Mon (M) L50" ends with L50 only if (M) is gone first,
-        // or if regex handles skipped content. Better to strip parens first.
-        cleaned = cleaned.replace(/\s*\(.*?\)\s*/g, '');
+        // 4. Handle nicknames in log like "Gengar (Gengar)" or "MyNick (Gengar)"
+        // In tooltips, the name is usually just "PokemonName"
+        // In logs, it can be "Nickname (PokemonName)"
+        if (cleaned.includes('(')) {
+            const match = cleaned.match(/\((.+?)\)/);
+            if (match) cleaned = match[1];
+            else cleaned = cleaned.split('(')[0];
+        }
 
-        // 4. Remove level suffix (e.g. " L50", " L100", "L100")
-        // Be very aggressive: Optional space + L + Digits at the end
-        cleaned = cleaned.replace(/\s*L\d+$/, '');
+        cleaned = cleaned.trim();
 
-        return cleaned.trim();
+        // 5. Forme normalization (e.g., Oricorio-Sensu -> Oricorio)
+        // We want to keep the base name for lookups
+        const baseFormes = ['Oricorio', 'Gourgeist', 'Pumpkaboo', 'Vivillon', 'Urshifu'];
+        for (const base of baseFormes) {
+            if (cleaned.startsWith(base + '-')) {
+                cleaned = base;
+                break;
+            }
+        }
+
+        // Strip any remaining ":" or "!" which shouldn't be in a name
+        cleaned = cleaned.replace(/[:!]/g, '').trim();
+
+        return cleaned;
     }
 
     function isOpponentPokemon(name) {
@@ -283,17 +361,48 @@ const ShowdownScraper = (() => {
     }
 
     function ensureTeamMember(team, name) {
+        if (!name) return;
+        
+        // Final sanity check: Is this name a valid Pokemon or at least looks like one?
+        if (name.length < 3 || name.includes(' lost ') || name.includes(' health')) return;
+
+        // Anti-duplication: If adding to myTeam, remove from opponentTeam and vice-versa
+        if (team === state.myTeam) {
+            if (state.opponentTeam[name]) {
+                console.log(`[ShowdownPredictor] Side-Switch: Moving ${name} from OPPONENT to PLAYER`);
+                delete state.opponentTeam[name];
+            }
+        } else {
+            if (state.myTeam[name]) {
+                console.log(`[ShowdownPredictor] Side-Switch: Moving ${name} from PLAYER to OPPONENT`);
+                delete state.myTeam[name];
+            }
+        }
+
         if (!team[name]) {
-            const data = lookupPokemon(name);
+            // Check if we already have 6 mons to prevent ghosting/overwriting
+            const teamSize = Object.keys(team).length;
+            if (teamSize >= 6 && !team[name]) {
+                console.log(`[ShowdownPredictor] Team Full: Not adding ${name} to ${team === state.myTeam ? 'PLAYER' : 'OPPONENT'} team (already has 6)`);
+                // Find a mon with 0 HP or least info to replace? 
+                // For now, let's just log it. In Randoms, sometimes illusions or nicknames cause > 6.
+            }
+
+            console.log(`[ShowdownPredictor] New Mon: Adding ${name} to ${team === state.myTeam ? 'PLAYER' : 'OPPONENT'} team`);
+            
+            // Try to get base data for typing/stats
+            const baseData = typeof lookupPokemon === 'function' ? lookupPokemon(name) : null;
+            
             team[name] = {
+                name: name,
                 hp: 100,
-                status: '',
-                moves: [],
+                ability: baseData ? baseData.abilities[0] : '',
                 item: '',
-                ability: data ? data.abilities[0] : '',
-                types: data ? data.types : [],
-                baseStats: data ? data.baseStats : null,
-                stats: null, // Actual stats from tooltip
+                teraType: '',
+                moves: [],
+                stats: baseData ? baseData.baseStats : {},
+                types: baseData ? baseData.types : ['???'],
+                status: '',
                 revealed: true,
                 boosts: { atk: 0, def: 0, spa: 0, spd: 0, spe: 0 }
             };
@@ -316,55 +425,53 @@ const ShowdownScraper = (() => {
      * whose width% represents HP
      */
     function scrapeHP() {
-        // Player's side (bottom/left statbars)
         const statbars = document.querySelectorAll('.statbar');
+        
         statbars.forEach(bar => {
             const nameEl = bar.querySelector('strong');
             const hpEl = bar.querySelector('.hpbar .hp');
             if (nameEl && hpEl) {
-                const name = cleanPokemonName(nameEl.textContent);
+                const rawName = nameEl.textContent;
+                const name = cleanPokemonName(rawName);
+                if (!name) return;
+
                 const width = hpEl.style.width;
                 const hp = width ? parseFloat(width) : 100;
 
-                // Determine if this is opponent or player based on bar position
-                const isRightSide = bar.classList.contains('rstatbar');
-                const isLeftSide = bar.classList.contains('lstatbar');
-
-                if (isRightSide) {
-                    // Right side = opponent (typically)
-                    // Strict Isolation: Ensure it's not in myTeam
-                    if (state.myTeam[name]) {
-                        console.warn(`[ShowdownPredictor] Corruption fixed: Removing ${name} from myTeam (found on opponent side)`);
-                        delete state.myTeam[name];
-                    }
-
-                    ensureTeamMember(state.opponentTeam, name);
-                    state.opponentTeam[name].hp = hp;
+                const isOpponentSide = bar.closest('.side-1') !== null || bar.classList.contains('rstatbar');
+                const isPlayerSide = bar.closest('.side-0') !== null || bar.classList.contains('lstatbar');
+                
+                let team = null;
+                if (isOpponentSide) {
+                    team = state.opponentTeam;
                     state.opponentActive = name;
-                } else if (isLeftSide) {
-                    // Left side = player
-                    // Strict Isolation: Ensure it's not in opponentTeam
-                    if (state.opponentTeam[name]) {
-                        console.warn(`[ShowdownPredictor] Corruption fixed: Removing ${name} from opponentTeam (found on my side)`);
-                        delete state.opponentTeam[name];
-                    }
-
-                    ensureTeamMember(state.myTeam, name);
-                    state.myTeam[name].hp = hp;
+                } else if (isPlayerSide) {
+                    team = state.myTeam;
                     state.myActive = name;
+                } else {
+                    // Final fallback
+                    const rect = bar.getBoundingClientRect();
+                    const isTop = rect.top < window.innerHeight / 2;
+                    team = isTop ? state.opponentTeam : state.myTeam;
+                    if (isTop) state.opponentActive = name;
+                    else state.myActive = name;
                 }
 
-                // Check for status icons
+                if (team) {
+                    ensureTeamMember(team, name);
+                    if (team[name]) team[name].hp = hp;
+                }
+                
+                // Status (poison, burn, etc)
                 const statusEl = bar.querySelector('.status');
-                if (statusEl) {
+                if (statusEl && team && team[name]) {
                     const statusText = statusEl.textContent.toLowerCase().trim();
-                    const team = isRightSide ? state.opponentTeam : state.myTeam;
-                    if (team[name]) {
-                        if (statusText.includes('brn')) team[name].status = 'brn';
-                        else if (statusText.includes('psn') || statusText.includes('tox')) team[name].status = 'tox';
-                        else if (statusText.includes('par')) team[name].status = 'par';
-                        else if (statusText.includes('slp')) team[name].status = 'slp';
-                        else if (statusText.includes('frz')) team[name].status = 'frz';
+                    const statusMap = { 'brn': 'brn', 'psn': 'tox', 'tox': 'tox', 'par': 'par', 'slp': 'slp', 'frz': 'frz' };
+                    for (const [key, val] of Object.entries(statusMap)) {
+                        if (statusText.includes(key)) {
+                            team[name].status = val;
+                            break;
+                        }
                     }
                 }
             }
@@ -379,7 +486,11 @@ const ShowdownScraper = (() => {
         state.myMoves = [];
 
         // Check for both desktop and mobile layouts
-        const moveButtons = document.querySelectorAll('.movemenu button, .move-menu button');
+        const moveButtons = document.querySelectorAll('.movemenu button, .move-menu button, .movebuttons-container button');
+        
+        if (moveButtons.length > 0) {
+            console.log(`[ShowdownPredictor] Scraper: Found ${moveButtons.length} move buttons`);
+        }
 
         moveButtons.forEach(btn => {
             // Try data-move attribute first, then text content
@@ -453,24 +564,24 @@ const ShowdownScraper = (() => {
      * Showdown uses .trainer with .teamicons containing .picon elements
      */
     function scrapeTeamIcons() {
-        const teamIconContainers = document.querySelectorAll('.trainer');
-        teamIconContainers.forEach(container => {
-            const icons = container.querySelectorAll('.picon');
-            icons.forEach(icon => {
-                // Check for aria-label or title which contain Pokémon name
-                const label = icon.getAttribute('aria-label') || icon.getAttribute('title') || '';
-                if (label) {
-                    const name = cleanPokemonName(label.split('(')[0]);
-                    // Fainted Pokémon have specific styling changes
-                    const isFainted = icon.style.opacity === '0.3' || icon.style.filter?.includes('grayscale');
-                    if (name && isFainted) {
-                        // Determine which team
-                        const isOpp = container.closest('.rightbar') || container.classList.contains('trainer-far');
-                        const team = isOpp ? state.opponentTeam : state.myTeam;
-                        if (team[name]) team[name].hp = 0;
-                    }
-                }
-            });
+        // Opponent icons: .side-1 (Top)
+        const oppIcons = document.querySelectorAll('.side-1 .teamicons span, .trainer-far .teamicons span');
+        oppIcons.forEach(icon => {
+            const label = icon.getAttribute('aria-label') || icon.getAttribute('title');
+            if (label) {
+                const name = cleanPokemonName(label);
+                if (name) ensureTeamMember(state.opponentTeam, name);
+            }
+        });
+
+        // My icons: .side-0 (Bottom)
+        const myIcons = document.querySelectorAll('.side-0 .teamicons span, .trainer-near .teamicons span');
+        myIcons.forEach(icon => {
+            const label = icon.getAttribute('aria-label') || icon.getAttribute('title');
+            if (label) {
+                const name = cleanPokemonName(label);
+                if (name) ensureTeamMember(state.myTeam, name);
+            }
         });
     }
 
@@ -479,20 +590,16 @@ const ShowdownScraper = (() => {
      * Showdown tooltips contain detailed info about moves, Pokémon, items, abilities
      */
     function scrapeTooltip() {
-        const tooltip = document.querySelector('#tooltipwrapper .tooltip');
-        if (!tooltip) return null;
-
-        const text = tooltip.innerText || tooltip.textContent;
-        if (!text) return null;
+        const tooltip = document.querySelector('#tooltipwrapper .tooltip, .tooltip');
+        if (!tooltip) return;
 
         const result = {
-            raw: text,
-            pokemon: null,
-            moves: [],
-            item: null,
-            ability: null,
+            pokemon: '',
             hp: null,
-            types: [],
+            ability: '',
+            item: '',
+            teraType: '',
+            moves: [],
             stats: {}
         };
 
@@ -500,110 +607,104 @@ const ShowdownScraper = (() => {
         const h2 = tooltip.querySelector('h2');
         if (h2) {
             const nameText = h2.textContent.trim();
+            
+            // AGGRESSIVE: Reject non-Pokemon names immediately
+            if (nameText.includes('Tera Type:') || nameText.includes('Ability:') || nameText.includes('Item:')) {
+                // If this is a sub-header, the Pokemon name is usually the FIRST h2 in the tooltip
+                const firstH2 = tooltip.querySelector('h2');
+                if (firstH2 && firstH2 === h2) return null; // It IS the first h2, so it's not a mon
+            }
+
             result.pokemon = cleanPokemonName(nameText);
+            if (!result.pokemon) return null;
 
             // Check if this is actually a Move tooltip
-            // If the name matches a known move, ignore it
-            // We can check if lookupMove exists (it should be loaded)
-            if (typeof lookupMove === 'function') {
-                const moveCheck = lookupMove(result.pokemon);
-                if (moveCheck && !moveCheck.isUnknown) {
-                    // It's a move, ignore
-                    return null;
-                }
-            }
+            if (typeof lookupMove === 'function' && lookupMove(result.pokemon)) return null;
         }
 
-        // Parse tooltip sections
-        const sections = tooltip.querySelectorAll('p');
-        sections.forEach(p => {
-            const pText = p.textContent.trim();
+        // HP
+        const hpBar = tooltip.querySelector('.hpbar .hp');
+        if (hpBar) {
+            const width = hpBar.style.width;
+            result.hp = width ? parseFloat(width) : 100;
+        }
 
-            // HP extraction
-            const hpMatch = pText.match(/HP:\s*([\d.]+)%|HP:\s*(\d+)\/(\d+)/);
-            if (hpMatch) {
-                result.hp = hpMatch[1] ? parseFloat(hpMatch[1]) : (parseInt(hpMatch[2]) / parseInt(hpMatch[3]) * 100);
+        // Stats (Atk, Def, etc)
+        const statElements = tooltip.querySelectorAll('p');
+        statElements.forEach(p => {
+            const text = p.textContent;
+            
+            // Ability
+            if (text.includes('Ability:')) {
+                result.ability = text.split('Ability:')[1].trim();
+            }
+            // Item
+            if (text.includes('Item:')) {
+                result.item = text.split('Item:')[1].trim();
+            }
+            // Tera Type
+            if (text.includes('Tera Type:')) {
+                result.teraType = text.split('Tera Type:')[1].trim();
             }
 
-            // Ability
-            const abilityMatch = pText.match(/Ability:\s*(.+?)(?:\s*\/|\s*$)/);
-            if (abilityMatch) result.ability = abilityMatch[1].trim();
-
-            // Item
-            const itemMatch = pText.match(/Item:\s*(.+?)(?:\s*$)/);
-            if (itemMatch) result.item = itemMatch[1].trim();
-
-            // Moves (bullet points)
-            if (pText.includes('•')) {
-                const moveLines = pText.split('\n');
-                moveLines.forEach(ml => {
-                    const mm = ml.match(/•\s*(.+)/);
-                    if (mm) result.moves.push(mm[1].trim().split('(')[0].trim());
+            // Actual Stats (Base Stats section)
+            // Example: "Atk: 100 / Def: 80 / SpA: 60"
+            const statMatch = text.match(/(Atk|Def|SpA|SpD|Spe):\s*(\d+)/g);
+            if (statMatch) {
+                statMatch.forEach(s => {
+                    const [key, val] = s.split(':').map(x => x.trim());
+                    const statMap = { 'Atk': 'atk', 'Def': 'def', 'SpA': 'spa', 'SpD': 'spd', 'Spe': 'spe' };
+                    if (statMap[key]) result.stats[statMap[key]] = parseInt(val);
                 });
             }
         });
 
-        // ─── Stats extraction ───
-        // Tooltips typically list stats like: "Atk 166 / Def 146 / SpA 226 / SpD 206 / Spe 186"
-        const textContent = tooltip.textContent;
-        // Pattern 1: Explicit labels
-        const statMatch = textContent.match(/Atk\D*(\d+)\D*Def\D*(\d+)\D*SpA\D*(\d+)\D*SpD\D*(\d+)\D*Spe\D*(\d+)/i);
-        if (statMatch) {
-            result.stats = {
-                atk: parseInt(statMatch[1]),
-                def: parseInt(statMatch[2]),
-                spa: parseInt(statMatch[3]),
-                spd: parseInt(statMatch[4]),
-                spe: parseInt(statMatch[5])
-            };
-        } else {
-            // Pattern 2: Raw numbers "Stats: 100 / 100 / 100 / 100 / 100" (skipping HP)
-            const rawStatMatch = textContent.match(/Stats:\s*(\d+)\s*\/\s*(\d+)\s*\/\s*(\d+)\s*\/\s*(\d+)\s*\/\s*(\d+)/i);
-            if (rawStatMatch) {
-                result.stats = {
-                    atk: parseInt(rawStatMatch[1]),
-                    def: parseInt(rawStatMatch[2]),
-                    spa: parseInt(rawStatMatch[3]),
-                    spd: parseInt(rawStatMatch[4]),
-                    spe: parseInt(rawStatMatch[5])
-                };
+        // Moves
+        const moveElements = tooltip.querySelectorAll('.section ul li');
+        moveElements.forEach(li => {
+            const moveName = li.textContent.replace('•', '').trim();
+            if (moveName && !result.moves.includes(moveName)) {
+                result.moves.push(moveName);
             }
-        }
-
+        });
 
         // Update state with tooltip data
         if (result.pokemon) {
-            // STRICT CHECK: Only update if we know whose Pokémon it is.
-            // Do NOT guess. Rely on scrapeHP to populate teams first.
-            let isOpp = false;
-            let found = false;
+            // 1. CLEAN THE NAME AGAIN (Just in case)
+            result.pokemon = cleanPokemonName(result.pokemon);
+            if (!result.pokemon) return;
 
-            if (state.myTeam[result.pokemon]) {
-                isOpp = false;
-                found = true;
-            } else if (state.opponentTeam[result.pokemon]) {
-                isOpp = true;
-                found = true;
+            // 2. DETERMINE SIDE (Aggressive)
+            let team = null;
+            
+            // Check if we are hovering a statbar or trainer side
+            const isOppTooltip = tooltip.closest('.rightbar') || 
+                               tooltip.closest('.trainer-far') || 
+                               tooltip.closest('.side-1') ||
+                               tooltip.classList.contains('opposing-tooltip') ||
+                               (tooltip.offsetLeft > window.innerWidth / 2);
+
+            // If it's the opponent's tooltip area, use opponent team
+            if (isOppTooltip) {
+                team = state.opponentTeam;
+            } else {
+                team = state.myTeam;
             }
 
-            if (found) {
-                const team = isOpp ? state.opponentTeam : state.myTeam;
-                const mon = team[result.pokemon];
+            ensureTeamMember(team, result.pokemon);
+            const mon = team[result.pokemon];
 
+            if (mon) {
                 if (result.hp !== null) mon.hp = result.hp;
                 if (result.ability) mon.ability = result.ability;
                 if (result.item) mon.item = result.item;
-                if (result.stats && Object.keys(result.stats).length > 0) mon.stats = result.stats; // Update actual stats
+                if (result.teraType) mon.teraType = result.teraType;
+                if (result.stats && Object.keys(result.stats).length > 0) mon.stats = result.stats;
                 if (result.moves.length > 0) {
                     result.moves.forEach(m => {
                         if (!mon.moves.includes(m)) mon.moves.push(m);
                     });
                 }
-            } else {
-                // Formatting mismatch or unknown mon. Log warning.
-                console.warn(`[ShowdownPredictor] Tooltip ignored for '${result.pokemon}'. Not in myTeam or opponentTeam.`,
-                    'My:', Object.keys(state.myTeam),
-                    'Opp:', Object.keys(state.opponentTeam));
             }
         }
 
@@ -621,8 +722,11 @@ const ShowdownScraper = (() => {
      */
     function startObserving(onUpdate) {
         // Observe battle log for new lines
+        const battleContainer = document.querySelector('.battle') || document.body;
         const battleLog = document.querySelector('.battle-log .inner') ||
             document.querySelector('.battle-log');
+        
+        console.log('[ShowdownPredictor] Scraper: Looking for battle log...', battleLog ? 'Found' : 'Not found');
 
         if (battleLog) {
             battleLogObserver = new MutationObserver((mutations) => {
@@ -654,8 +758,9 @@ const ShowdownScraper = (() => {
         // Observe tooltips appearing/disappearing
         const tooltipWrapper = document.querySelector('#tooltipwrapper') || document.body;
         tooltipObserver = new MutationObserver((mutations) => {
-            const tooltip = document.querySelector('#tooltipwrapper .tooltip');
+            const tooltip = document.querySelector('#tooltipwrapper .tooltip, .tooltip');
             if (tooltip) {
+                console.log('[ShowdownPredictor] Scraper: Tooltip detected');
                 scrapeTooltip();
                 if (onUpdate) onUpdate(state);
             }
@@ -696,21 +801,52 @@ const ShowdownScraper = (() => {
      * Initial scan of the current battle state
      */
     function initialScan() {
-        // Try to determine player side
-        const userEl = document.querySelector('.trainer-near strong');
-        if (userEl) {
-            // We're the near trainer
-            state.myPlayerIndex = 'p1';
+        console.log('[ShowdownPredictor] Scraper: Starting initial scan');
+        
+        // 1. Definitive source of truth for "Me": trainer-near
+        const nearTrainer = document.querySelector('.trainer-near strong');
+        if (nearTrainer) {
+            state.myName = nearTrainer.textContent.trim().replace(/^☆/, '').replace(/^[^a-zA-Z0-9]+/, '');
         }
 
-        // Parse existing battle log
-        const logLines = document.querySelectorAll('.battle-log .inner div, .battle-log .inner h2');
+        // 2. Detect opponent from header
+        const header = document.querySelector('.battle-log .inner h2');
+        if (header && header.textContent.includes(' vs. ')) {
+            const parts = header.textContent.split(' vs. ');
+            const p1 = parts[0].trim().replace(/^☆/, '').replace(/^[^a-zA-Z0-9]+/, '');
+            const p2 = parts[1].trim().replace(/^☆/, '').replace(/^[^a-zA-Z0-9]+/, '');
+            
+            if (state.myName) {
+                // If we know who we are, the other one is the opponent
+                if (state.myName.toLowerCase() === p1.toLowerCase()) {
+                    state.opponentName = p2;
+                } else {
+                    state.opponentName = p1;
+                }
+            } else {
+                // Fallback if nearTrainer failed
+                state.opponentName = p1;
+                state.myName = p2;
+            }
+        }
+
+        // 3. Fallback for opponent name
+        if (!state.opponentName) {
+            const farTrainer = document.querySelector('.trainer-far strong');
+            if (farTrainer) state.opponentName = farTrainer.textContent.trim().replace(/^☆/, '').replace(/^[^a-zA-Z0-9]+/, '');
+        }
+
+        console.log(`[ShowdownPredictor] Scraper: Detected players - Me: ${state.myName}, Opponent: ${state.opponentName}`);
+
+        // 2. Parse existing battle log
+        const logLines = document.querySelectorAll('.battle-log .inner div, .battle-log .inner h2, .battle-log .battle-history');
+        console.log(`[ShowdownPredictor] Scraper: Found ${logLines.length} log lines for initial scan`);
         logLines.forEach(el => {
             const text = el.textContent || '';
             text.split('\n').forEach(line => parseBattleLogLine(line));
         });
 
-        // Scrape current state
+        // 3. Scrape current state
         scrapeHP();
         scrapeMoveMenu();
         scrapeSwitchMenu();
@@ -727,6 +863,8 @@ const ShowdownScraper = (() => {
         state.opponentTeam = {};
         state.myActive = null;
         state.opponentActive = null;
+        state.myName = null;
+        state.opponentName = null;
         state.field = {
             weather: null, terrain: null,
             myHazards: { stealthRock: false, spikes: 0, toxicSpikes: 0, stickyWeb: false },

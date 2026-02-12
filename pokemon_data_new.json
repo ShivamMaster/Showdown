@@ -1,4 +1,4 @@
-const POKEMON_DATA = {
+{
     "Bulbasaur": {
         "types": [
             "Grass",
@@ -2461,7 +2461,7 @@ const POKEMON_DATA = {
             "Analytic"
         ]
     },
-    "Farfetch\u2019d": {
+    "Farfetch\\u2019d": {
         "types": [
             "Normal",
             "Flying"
@@ -2480,7 +2480,7 @@ const POKEMON_DATA = {
             "Defiant"
         ]
     },
-    "Farfetch\u2019d-Galar": {
+    "Farfetch\\u2019d-Galar": {
         "types": [
             "Fighting"
         ],
@@ -16067,7 +16067,7 @@ const POKEMON_DATA = {
             "Moxie"
         ]
     },
-    "Flabe\u0301be\u0301": {
+    "Flabe\\u0301be\\u0301": {
         "types": [
             "Fairy"
         ],
@@ -21248,7 +21248,7 @@ const POKEMON_DATA = {
             "Perish Body"
         ]
     },
-    "Sirfetch\u2019d": {
+    "Sirfetch\\u2019d": {
         "types": [
             "Fighting"
         ],
@@ -26770,11 +26770,4 @@ const POKEMON_DATA = {
             "Levitate"
         ]
     }
-};
-
-function lookupPokemon(name) {
-    if (!name) return null;
-    return POKEMON_DATA[name] || null;
 }
-
-if (typeof module !== 'undefined') module.exports = { POKEMON_DATA, lookupPokemon };

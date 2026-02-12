@@ -12,6 +12,82 @@
 
 const PredictionEngine = (() => {
 
+    // ─── Utility Helpers ───
+
+    function calcStat(base, ev, iv, nature, level, isHP) {
+        if (isHP) {
+            return Math.floor((2 * base + iv + Math.floor(ev / 4)) * level / 100) + level + 10;
+        }
+        return Math.floor((Math.floor((2 * base + iv + Math.floor(ev / 4)) * level / 100) + 5) * nature);
+    }
+
+    function getEffectiveness(moveType, targetTypes) {
+        let effectiveness = 1;
+        targetTypes.forEach(type => {
+            const chart = TYPE_CHART[moveType];
+            if (chart) {
+                if (chart.double?.includes(type)) effectiveness *= 2;
+                if (chart.half?.includes(type)) effectiveness *= 0.5;
+                if (chart.zero?.includes(type)) effectiveness *= 0;
+            }
+        });
+        return effectiveness;
+    }
+
+    function isWeakToSTAB(defenderTypes, attackerTypes) {
+        if (!defenderTypes || !attackerTypes) return false;
+        return attackerTypes.some(aType => getEffectiveness(aType, defenderTypes) >= 2);
+    }
+
+    function resistsSTAB(defenderTypes, attackerTypes) {
+        if (!defenderTypes || !attackerTypes) return false;
+        return attackerTypes.every(aType => getEffectiveness(aType, defenderTypes) <= 0.5);
+    }
+
+    function getSpeedRange(pokemonName) {
+        const data = lookupPokemon(pokemonName);
+        if (!data) return { min: 100, max: 100 };
+        const base = data.baseStats.spe;
+        return {
+            min: calcStat(base, 0, 0, 0.9, 100, false),
+            max: calcStat(base, 252, 31, 1.1, 100, false)
+        };
+    }
+
+    // Move classification helpers
+    function isSetupMove(moveName) {
+        const setupMoves = [
+            'Swords Dance', 'Dragon Dance', 'Quiver Dance', 'Calm Mind', 'Nasty Plot',
+            'Shell Smash', 'Bulk Up', 'Shift Gear', 'Victory Dance', 'Agility',
+            'Iron Defense', 'Amnesia', 'Autotomize', 'Coil', 'Growth', 'Hone Claws',
+            'Tail Glow', 'Work Up', 'Clangorous Soul', 'No Retreat', 'Tidy Up'
+        ];
+        return setupMoves.includes(moveName);
+    }
+
+    function isRecoveryMove(moveName) {
+        const recoveryMoves = [
+            'Recover', 'Roost', 'Soft-Boiled', 'Milk Drink', 'Slack Off',
+            'Shore Up', 'Synthesis', 'Morning Sun', 'Moonlight', 'Wish', 'Life Dew'
+        ];
+        return recoveryMoves.includes(moveName);
+    }
+
+    function isPivotMove(moveName) {
+        const pivotMoves = ['U-turn', 'Volt Switch', 'Flip Turn', 'Parting Shot', 'Chilly Reception', 'Baton Pass', 'Teleport'];
+        return pivotMoves.includes(moveName);
+    }
+
+    function isPriorityMove(moveName) {
+        const move = lookupMove(moveName);
+        return move && move.priority > 0;
+    }
+
+    function isHazardMove(moveName) {
+        const hazardMoves = ['Stealth Rock', 'Spikes', 'Toxic Spikes', 'Sticky Web', 'Ceaseless Edge', 'Stone Axe'];
+        return hazardMoves.includes(moveName);
+    }
+
     // ─── Damage Calculation ───
 
     /**
@@ -106,15 +182,38 @@ const PredictionEngine = (() => {
 
         // STAB
         let stab = 1;
-        if (attacker.types && attacker.types.includes(move.type)) {
+        let attackerTypes = attacker.types;
+        
+        // Handle Terastallization STAB
+        if (attacker.isTerastallized && attacker.teraType) {
+            attackerTypes = [attacker.teraType];
+            if (attacker.types.includes(move.type)) {
+                // Tera STAB boost: 2x if Tera matches original type, else 1.5x
+                stab = (attacker.teraType === move.type) ? 2.0 : 1.5;
+            } else if (attacker.teraType === move.type) {
+                stab = 1.5;
+            }
+        } else if (attacker.types && attacker.types.includes(move.type)) {
             stab = 1.5;
-            // Adaptability
-            if (attacker.ability === 'Adaptability') stab = 2;
         }
 
-        // Type effectiveness
-        const defTypes = defender.types || ['Normal'];
+        // Adaptability
+        if (attacker.ability === 'Adaptability' && stab > 1) {
+            stab = 2.0;
+        }
+
+        // Type effectiveness (handle Tera)
+        let defTypes = defender.types || ['Normal'];
+        if (defender.isTerastallized && defender.teraType) {
+            defTypes = [defender.teraType];
+        }
         let effectiveness = getEffectiveness(move.type, defTypes);
+
+        // Tera Blast Special Case
+        if (move.name === 'Tera Blast' && attacker.isTerastallized) {
+            // Tera Blast becomes the Tera type and uses higher of Atk/SpA
+            effectiveness = getEffectiveness(attacker.teraType, defTypes);
+        }
 
         // Freeze-Dry is SE on Water
         if (move.name === 'Freeze-Dry' && defTypes.includes('Water')) {
@@ -460,8 +559,19 @@ const PredictionEngine = (() => {
         const myActive = state.myActive;
         const oppActive = state.opponentActive;
 
+        // Ensure we always return something even if state is incomplete
         if (!myActive || !oppActive) {
             console.log('[ShowdownPredictor] Engine: Waiting for active mons', { myActive, oppActive });
+            // If we have available moves in the UI, return the first one as a fallback
+            if (state.myMoves && state.myMoves.length > 0) {
+                const firstMove = state.myMoves.find(m => !m.disabled) || state.myMoves[0];
+                return [{
+                    name: firstMove.name,
+                    score: 0,
+                    damage: { min: 0, max: 0 },
+                    reason: '⚠️ Waiting for active mon data...'
+                }];
+            }
             return null;
         }
 
@@ -477,9 +587,9 @@ const PredictionEngine = (() => {
 
         // Get our available moves (from move menu or known moves)
         let availableMoves = [];
-        if (state.myMoves.length > 0) {
+        if (state.myMoves && state.myMoves.length > 0) {
             availableMoves = state.myMoves.filter(m => !m.disabled).map(m => m.name);
-        } else if (myMon && myMon.moves.length > 0) {
+        } else if (myMon && myMon.moves && myMon.moves.length > 0) {
             availableMoves = myMon.moves;
         }
 

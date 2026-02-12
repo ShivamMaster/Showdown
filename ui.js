@@ -122,15 +122,19 @@ const PredictorUI = (() => {
     const btn = document.getElementById('sp-minimize');
 
     if (isMinimized) {
-      body.style.display = 'none';
-      panel.classList.add('sp-minimized');
-      btn.textContent = '▲';
-      btn.title = 'Expand';
+      if (body) body.style.display = 'none';
+      if (panel) panel.classList.add('sp-minimized');
+      if (btn) {
+        btn.textContent = '▲';
+        btn.title = 'Expand';
+      }
     } else {
-      body.style.display = 'block';
-      panel.classList.remove('sp-minimized');
-      btn.textContent = '▬';
-      btn.title = 'Minimize';
+      if (body) body.style.display = 'block';
+      if (panel) panel.classList.remove('sp-minimized');
+      if (btn) {
+        btn.textContent = '▬';
+        btn.title = 'Minimize';
+      }
     }
   }
 
@@ -139,9 +143,11 @@ const PredictorUI = (() => {
    */
   function setupDrag() {
     const handle = document.getElementById('sp-drag-handle');
+    if (!handle) return;
 
     handle.addEventListener('mousedown', (e) => {
       if (e.target.closest('.sp-btn-minimize')) return;
+      if (!panel) return;
       isDragging = true;
       dragOffset.x = e.clientX - panel.offsetLeft;
       dragOffset.y = e.clientY - panel.offsetTop;
@@ -150,7 +156,7 @@ const PredictorUI = (() => {
     });
 
     document.addEventListener('mousemove', (e) => {
-      if (!isDragging) return;
+      if (!isDragging || !panel) return;
       const x = Math.max(0, Math.min(window.innerWidth - 300, e.clientX - dragOffset.x));
       const y = Math.max(0, Math.min(window.innerHeight - 50, e.clientY - dragOffset.y));
       panel.style.left = x + 'px';
@@ -159,8 +165,9 @@ const PredictorUI = (() => {
     });
 
     document.addEventListener('mouseup', () => {
+      if (!isDragging) return;
       isDragging = false;
-      panel.style.transition = '';
+      if (panel) panel.style.transition = '';
     });
   }
 
@@ -456,6 +463,14 @@ const PredictorUI = (() => {
         const hpClass = mon.hp <= 0 ? 'sp-hp-fainted' : mon.hp < 25 ? 'sp-hp-low' : mon.hp < 50 ? 'sp-hp-med' : '';
         const isActive = name === state.opponentActive ? ' sp-active' : '';
 
+        // Stats string
+        let statsStr = '';
+        if (mon.stats) {
+          statsStr = `<div class="sp-mon-stats" style="font-size:0.75em; opacity:0.8; margin-top:2px;">
+            Atk ${mon.stats.atk} | Def ${mon.stats.def} | SpA ${mon.stats.spa} | SpD ${mon.stats.spd} | Spe ${mon.stats.spe}
+          </div>`;
+        }
+
         html += `
           <div class="sp-team-mon${isActive}">
             <span class="sp-mon-name">${name}</span>
@@ -463,6 +478,7 @@ const PredictorUI = (() => {
             <span class="sp-mon-hp ${hpClass}">${Math.round(mon.hp)}%</span>
             ${mon.item ? `<span class="sp-mon-item">📦 ${mon.item}</span>` : ''}
             ${mon.ability ? `<span class="sp-mon-ability">⭐ ${mon.ability}</span>` : ''}
+            ${statsStr}
             <div class="sp-mon-moves">${movesStr}</div>
           </div>
         `;
@@ -503,6 +519,14 @@ const PredictorUI = (() => {
       const hpClass = mon.hp <= 0 ? 'sp-hp-fainted' : mon.hp < 25 ? 'sp-hp-low' : mon.hp < 50 ? 'sp-hp-med' : '';
       const isActive = name === state.myActive ? ' sp-active' : '';
 
+      // Stats string
+      let statsStr = '';
+      if (mon.stats) {
+        statsStr = `<div class="sp-mon-stats" style="font-size:0.75em; opacity:0.8; margin-top:2px;">
+          ${mon.stats.atk}/${mon.stats.def}/${mon.stats.spa}/${mon.stats.spd}/${mon.stats.spe}
+        </div>`;
+      }
+
       // Simple row
       html += `
           <div class="sp-team-mon${isActive}">
@@ -512,6 +536,8 @@ const PredictorUI = (() => {
             </div>
             <div style="font-size:0.8em; opacity:0.7">${types}</div>
             ${mon.item ? `<div style="font-size:0.8em">📦 ${mon.item}</div>` : ''}
+            ${mon.ability ? `<div style="font-size:0.8em">⭐ ${mon.ability}</div>` : ''}
+            ${statsStr}
             <div class="sp-mon-moves" style="font-size:0.8em">${movesStr}</div>
           </div>
         `;
