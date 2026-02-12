@@ -81,7 +81,15 @@ const PredictorUI = (() => {
             <span class="sp-section-icon">📊</span>
             <span>Known Info</span>
           </div>
-          <div class="sp-teams-compact" id="sp-teams-compact"></div>
+        <div class="sp-teams-compact" id="sp-teams-compact"></div>
+        </div>
+
+        <div class="sp-section sp-my-team-section">
+          <div class="sp-section-header">
+            <span class="sp-section-icon">🛡️</span>
+            <span>My Team (Debug)</span>
+          </div>
+          <div class="sp-teams-compact" id="sp-my-team-compact"></div>
         </div>
 
         <div class="sp-footer">
@@ -201,7 +209,9 @@ const PredictorUI = (() => {
     updateFieldState(analysis.field);
 
     // Teams
+    // Teams
     updateTeamsCompact(analysis);
+    updateMyTeamCompact(analysis);
   }
 
   function updateSwitchPrediction(pred) {
@@ -470,6 +480,43 @@ const PredictorUI = (() => {
       panel.remove();
       panel = null;
     }
+  }
+
+  function updateMyTeamCompact(analysis) {
+    const el = document.getElementById('sp-my-team-compact');
+    if (!el) return;
+
+    const state = ShowdownScraper.state;
+    // Basic list of my team
+    const myEntries = Object.entries(state.myTeam);
+
+    if (myEntries.length === 0) {
+      el.innerHTML = '<div class="sp-team-mon">No team data found</div>';
+      return;
+    }
+
+    let html = '';
+    myEntries.forEach(([name, mon]) => {
+      const data = lookupPokemon(name);
+      const types = data ? data.types.join('/') : '???';
+      const movesStr = mon.moves.length > 0 ? mon.moves.join(', ') : '';
+      const hpClass = mon.hp <= 0 ? 'sp-hp-fainted' : mon.hp < 25 ? 'sp-hp-low' : mon.hp < 50 ? 'sp-hp-med' : '';
+      const isActive = name === state.myActive ? ' sp-active' : '';
+
+      // Simple row
+      html += `
+          <div class="sp-team-mon${isActive}">
+            <div style="display:flex; justify-content:space-between;">
+                <span class="sp-mon-name">${name}</span>
+                <span class="sp-mon-hp ${hpClass}">${Math.round(mon.hp)}%</span>
+            </div>
+            <div style="font-size:0.8em; opacity:0.7">${types}</div>
+            ${mon.item ? `<div style="font-size:0.8em">📦 ${mon.item}</div>` : ''}
+            <div class="sp-mon-moves" style="font-size:0.8em">${movesStr}</div>
+          </div>
+        `;
+    });
+    el.innerHTML = html;
   }
 
   return {

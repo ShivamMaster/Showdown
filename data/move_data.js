@@ -158,7 +158,25 @@ const MOVE_DATA = {
     "Leaf Storm": { bp: 130, type: "Grass", cat: "Special", priority: 0, acc: 90, flags: [], effect: "Lowers user SpA -2" },
     "Gunk Shot": { bp: 120, type: "Poison", cat: "Physical", priority: 0, acc: 80, flags: [], effect: "30% poison" },
     "Tera Blast": { bp: 80, type: "Normal", cat: "Special", priority: 0, acc: 100, flags: [], effect: "Changes type to Tera Type" },
-    "Substitute": { bp: 0, type: "Normal", cat: "Status", priority: 0, acc: 100, flags: ["setup"], effect: "Create substitute using 25% HP" }
+    "Substitute": { bp: 0, type: "Normal", cat: "Status", priority: 0, acc: 100, flags: ["setup"], effect: "Create substitute using 25% HP" },
+
+    // ─── Added Common Moves ───
+    "Fire Blast": { bp: 110, type: "Fire", cat: "Special", priority: 0, acc: 85, flags: [], effect: "10% burn" },
+    "Hurricane": { bp: 110, type: "Flying", cat: "Special", priority: 0, acc: 70, flags: [], effect: "30% confuse, perfect in rain" },
+    "Focus Blast": { bp: 120, type: "Fighting", cat: "Special", priority: 0, acc: 70, flags: [], effect: "10% lower SpD" },
+    "Blizzard": { bp: 110, type: "Ice", cat: "Special", priority: 0, acc: 70, flags: [], effect: "10% freeze, perfect in hail/snow" },
+    "Thunder": { bp: 110, type: "Electric", cat: "Special", priority: 0, acc: 70, flags: [], effect: "30% paralyze, perfect in rain" },
+    "Hydro Pump": { bp: 110, type: "Water", cat: "Special", priority: 0, acc: 80, flags: [] },
+
+    "Morning Sun": { bp: 0, type: "Normal", cat: "Status", priority: 0, acc: 100, flags: ["recovery"], effect: "Heals based on weather" },
+    "Synthesis": { bp: 0, type: "Grass", cat: "Status", priority: 0, acc: 100, flags: ["recovery"], effect: "Heals based on weather" },
+    "Moonlight": { bp: 0, type: "Fairy", cat: "Status", priority: 0, acc: 100, flags: ["recovery"], effect: "Heals based on weather" },
+    "Shore Up": { bp: 0, type: "Ground", cat: "Status", priority: 0, acc: 100, flags: ["recovery"], effect: "Heals more in sand" },
+    "Strength Sap": { bp: 0, type: "Grass", cat: "Status", priority: 0, acc: 100, flags: ["recovery"], effect: "Heals = target Atk, lowers Atk" },
+
+    "Reflect": { bp: 0, type: "Psychic", cat: "Status", priority: 0, acc: 100, flags: ["setup"], effect: "Halves physical damage 5 turns" },
+    "Light Screen": { bp: 0, type: "Psychic", cat: "Status", priority: 0, acc: 100, flags: ["setup"], effect: "Halves special damage 5 turns" },
+    "Aurora Veil": { bp: 0, type: "Ice", cat: "Status", priority: 0, acc: 100, flags: ["setup"], effect: "Halves all damage 5 turns (Hail/Snow only)" }
 };
 
 /**

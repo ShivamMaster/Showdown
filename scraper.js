@@ -39,9 +39,16 @@ const ShowdownScraper = (() => {
     /**
      * Parse a battle log line and update state
      */
+    /**
+     * Parse a battle log line and update state
+     */
     function parseBattleLogLine(text) {
         if (!text || text.trim() === '') return;
         const line = text.trim();
+
+        // Strict textual check for opponent actions
+        // Showdown consistently prefixes opponent actions with "The opposing "
+        const isOpposingAction = line.includes('The opposing');
 
         // Turn number
         const turnMatch = line.match(/^Turn (\d+)/);
@@ -56,7 +63,8 @@ const ShowdownScraper = (() => {
         if (moveMatch) {
             const pokemonName = cleanPokemonName(moveMatch[1]);
             const moveName = moveMatch[2].trim();
-            const isOpponent = line.includes('The opposing') || isOpponentPokemon(pokemonName);
+            // Strict logic: If line says 'The opposing', it is opponent. Otherwise, it is mine.
+            const isOpponent = isOpposingAction;
 
             if (isOpponent) {
                 addMoveToTeam(state.opponentTeam, pokemonName, moveName);
@@ -66,32 +74,32 @@ const ShowdownScraper = (() => {
             return;
         }
 
-        // Switch: "PlayerName sent out Pokémon!" / "PlayerName withdrew Pokémon!"
-        // Or: "Go! Pokémon!" / "The opposing Pokémon came back!"
-        const sendOutMatch = line.match(/(?:Go! |.*?sent out )(.+?)!/);
-        if (sendOutMatch) {
-            const name = cleanPokemonName(sendOutMatch[1]);
-            if (!line.includes('opposing')) {
-                state.myActive = name;
-                ensureTeamMember(state.myTeam, name);
-            }
+        // Switch Logic:
+        // "Go! X!" -> User (Live Battle Standard)
+        // "PlayerName sent out X!" -> Opponent (Usually, unless Replay)
+        // "The opposing X came out!" -> Opponent
+
+        // 1. User Switch: "Go! [Pokemon]!"
+        const goMatch = line.match(/^Go! (.+?)!/);
+        if (goMatch) {
+            const name = cleanPokemonName(goMatch[1]);
+            state.myActive = name;
+            ensureTeamMember(state.myTeam, name);
+            // If we found a "Go!" match, we stop processing this line for switches
+            return;
         }
 
-        const oppSendOutMatch = line.match(/(?:The opposing )(.+?)(?:\scame out| appeared)/);
-        if (oppSendOutMatch) {
-            const name = cleanPokemonName(oppSendOutMatch[1]);
+        // 2. Opponent Switch: "The opposing [Pokemon] came out!" or "PlayerName sent out [Pokemon]!"
+        // Note: We treat "sent out" as opponent because User sees "Go!".
+        // Exception: "User sent out X!" in some niche formats? Unlikely in standard live play.
+        const oppSentMatch = line.match(/.*?sent out (.+?)!/);
+        const cameOutMatch = line.match(/(?:The opposing )(.+?)(?:\scame out| appeared)/);
+
+        if (oppSentMatch || cameOutMatch) {
+            const name = cleanPokemonName(oppSentMatch ? oppSentMatch[1] : cameOutMatch[1]);
             state.opponentActive = name;
             ensureTeamMember(state.opponentTeam, name);
-        }
-
-        // Also catch "Opponent sent out X!"
-        const oppSentMatch = line.match(/.*?sent out (.+?)!/);
-        if (oppSentMatch && !sendOutMatch) {
-            const name = cleanPokemonName(oppSentMatch[1]);
-            if (isOpponentPokemon(name) || line.includes('opposing')) {
-                state.opponentActive = name;
-                ensureTeamMember(state.opponentTeam, name);
-            }
+            return;
         }
 
         // Damage: "Pokémon lost X% of its health!"
@@ -99,8 +107,7 @@ const ShowdownScraper = (() => {
         if (dmgMatch) {
             const name = cleanPokemonName(dmgMatch[1]);
             const pct = parseFloat(dmgMatch[2]);
-            const isOpp = line.includes('The opposing') || isOpponentPokemon(name);
-            const team = isOpp ? state.opponentTeam : state.myTeam;
+            const team = isOpposingAction ? state.opponentTeam : state.myTeam;
             if (team[name]) {
                 team[name].hp = Math.max(0, team[name].hp - pct);
             }
@@ -110,8 +117,7 @@ const ShowdownScraper = (() => {
         const faintMatch = line.match(/(?:The opposing )?(.+?) fainted!/);
         if (faintMatch) {
             const name = cleanPokemonName(faintMatch[1]);
-            const isOpp = line.includes('The opposing') || isOpponentPokemon(name);
-            const team = isOpp ? state.opponentTeam : state.myTeam;
+            const team = isOpposingAction ? state.opponentTeam : state.myTeam;
             if (team[name]) {
                 team[name].hp = 0;
                 team[name].status = 'fnt';
@@ -132,8 +138,7 @@ const ShowdownScraper = (() => {
             const match = line.match(pattern.regex);
             if (match) {
                 const name = cleanPokemonName(match[1]);
-                const isOpp = line.includes('The opposing') || isOpponentPokemon(name);
-                const team = isOpp ? state.opponentTeam : state.myTeam;
+                const team = isOpposingAction ? state.opponentTeam : state.myTeam;
                 if (team[name]) team[name].status = pattern.status;
             }
         }
@@ -214,8 +219,7 @@ const ShowdownScraper = (() => {
             if (match) {
                 const name = cleanPokemonName(match[1]);
                 const item = match[pattern.item_group];
-                const isOpp = line.includes('The opposing') || isOpponentPokemon(name);
-                const team = isOpp ? state.opponentTeam : state.myTeam;
+                const team = isOpposingAction ? state.opponentTeam : state.myTeam;
                 if (team[name] && item) team[name].item = item.trim();
             }
         }
@@ -225,8 +229,7 @@ const ShowdownScraper = (() => {
         if (abilityMatch) {
             const ability = abilityMatch[1];
             const name = cleanPokemonName(abilityMatch[2]);
-            const isOpp = line.includes('The opposing') || isOpponentPokemon(name);
-            const team = isOpp ? state.opponentTeam : state.myTeam;
+            const team = isOpposingAction ? state.opponentTeam : state.myTeam;
             if (team[name]) team[name].ability = ability;
         }
 
@@ -247,8 +250,7 @@ const ShowdownScraper = (() => {
             const match = line.match(pattern.regex);
             if (match) {
                 const name = cleanPokemonName(match[1]);
-                const isOpp = line.includes('The opposing') || isOpponentPokemon(name);
-                const team = isOpp ? state.opponentTeam : state.myTeam;
+                const team = isOpposingAction ? state.opponentTeam : state.myTeam;
                 if (team[name]) team[name].ability = pattern.ability;
             }
         }
@@ -258,12 +260,22 @@ const ShowdownScraper = (() => {
 
     function cleanPokemonName(name) {
         if (!name) return '';
-        // Remove nickname formatting, gender symbols, etc.
-        return name.replace(/\s*\(.*?\)\s*/g, '')
-            .replace(/♂|♀/g, '')
-            .replace(/^\s+|\s+$/g, '')
-            .split('  ')[0]  // Remove trailing level info
-            .trim();
+        // 1. Normalize whitespace (tabs, newlines, non-breaking spaces) to single space
+        let cleaned = name.replace(/[\n\t\r\u00a0]/g, ' ').trim();
+
+        // 2. Remove gender symbols
+        cleaned = cleaned.replace(/[♂♀]/g, '');
+
+        // 3. Remove nickname formatting (parentheses) BEFORE level suffix
+        // This is critical because "Mon (M) L50" ends with L50 only if (M) is gone first,
+        // or if regex handles skipped content. Better to strip parens first.
+        cleaned = cleaned.replace(/\s*\(.*?\)\s*/g, '');
+
+        // 4. Remove level suffix (e.g. " L50", " L100", "L100")
+        // Be very aggressive: Optional space + L + Digits at the end
+        cleaned = cleaned.replace(/\s*L\d+$/, '');
+
+        return cleaned.trim();
     }
 
     function isOpponentPokemon(name) {
@@ -281,6 +293,7 @@ const ShowdownScraper = (() => {
                 ability: data ? data.abilities[0] : '',
                 types: data ? data.types : [],
                 baseStats: data ? data.baseStats : null,
+                stats: null, // Actual stats from tooltip
                 revealed: true,
                 boosts: { atk: 0, def: 0, spa: 0, spd: 0, spe: 0 }
             };
@@ -319,11 +332,23 @@ const ShowdownScraper = (() => {
 
                 if (isRightSide) {
                     // Right side = opponent (typically)
+                    // Strict Isolation: Ensure it's not in myTeam
+                    if (state.myTeam[name]) {
+                        console.warn(`[ShowdownPredictor] Corruption fixed: Removing ${name} from myTeam (found on opponent side)`);
+                        delete state.myTeam[name];
+                    }
+
                     ensureTeamMember(state.opponentTeam, name);
                     state.opponentTeam[name].hp = hp;
                     state.opponentActive = name;
                 } else if (isLeftSide) {
                     // Left side = player
+                    // Strict Isolation: Ensure it's not in opponentTeam
+                    if (state.opponentTeam[name]) {
+                        console.warn(`[ShowdownPredictor] Corruption fixed: Removing ${name} from opponentTeam (found on my side)`);
+                        delete state.opponentTeam[name];
+                    }
+
                     ensureTeamMember(state.myTeam, name);
                     state.myTeam[name].hp = hp;
                     state.myActive = name;
@@ -389,7 +414,11 @@ const ShowdownScraper = (() => {
     function scrapeSwitchMenu() {
         state.mySwitches = [];
         const switchMenu = document.querySelector('.switchmenu');
-        if (!switchMenu) return;
+        // Check visibility. Usually offsetParent is good enough for 'display: none'
+        if (!switchMenu || switchMenu.offsetParent === null) {
+            state.forceSwitch = false;
+            return;
+        }
 
         const switchButtons = switchMenu.querySelectorAll('button');
         switchButtons.forEach(btn => {
@@ -472,6 +501,17 @@ const ShowdownScraper = (() => {
         if (h2) {
             const nameText = h2.textContent.trim();
             result.pokemon = cleanPokemonName(nameText);
+
+            // Check if this is actually a Move tooltip
+            // If the name matches a known move, ignore it
+            // We can check if lookupMove exists (it should be loaded)
+            if (typeof lookupMove === 'function') {
+                const moveCheck = lookupMove(result.pokemon);
+                if (moveCheck && !moveCheck.isUnknown) {
+                    // It's a move, ignore
+                    return null;
+                }
+            }
         }
 
         // Parse tooltip sections
@@ -503,6 +543,34 @@ const ShowdownScraper = (() => {
             }
         });
 
+        // ─── Stats extraction ───
+        // Tooltips typically list stats like: "Atk 166 / Def 146 / SpA 226 / SpD 206 / Spe 186"
+        const textContent = tooltip.textContent;
+        // Pattern 1: Explicit labels
+        const statMatch = textContent.match(/Atk\D*(\d+)\D*Def\D*(\d+)\D*SpA\D*(\d+)\D*SpD\D*(\d+)\D*Spe\D*(\d+)/i);
+        if (statMatch) {
+            result.stats = {
+                atk: parseInt(statMatch[1]),
+                def: parseInt(statMatch[2]),
+                spa: parseInt(statMatch[3]),
+                spd: parseInt(statMatch[4]),
+                spe: parseInt(statMatch[5])
+            };
+        } else {
+            // Pattern 2: Raw numbers "Stats: 100 / 100 / 100 / 100 / 100" (skipping HP)
+            const rawStatMatch = textContent.match(/Stats:\s*(\d+)\s*\/\s*(\d+)\s*\/\s*(\d+)\s*\/\s*(\d+)\s*\/\s*(\d+)/i);
+            if (rawStatMatch) {
+                result.stats = {
+                    atk: parseInt(rawStatMatch[1]),
+                    def: parseInt(rawStatMatch[2]),
+                    spa: parseInt(rawStatMatch[3]),
+                    spd: parseInt(rawStatMatch[4]),
+                    spe: parseInt(rawStatMatch[5])
+                };
+            }
+        }
+
+
         // Update state with tooltip data
         if (result.pokemon) {
             // STRICT CHECK: Only update if we know whose Pokémon it is.
@@ -525,14 +593,17 @@ const ShowdownScraper = (() => {
                 if (result.hp !== null) mon.hp = result.hp;
                 if (result.ability) mon.ability = result.ability;
                 if (result.item) mon.item = result.item;
+                if (result.stats && Object.keys(result.stats).length > 0) mon.stats = result.stats; // Update actual stats
                 if (result.moves.length > 0) {
                     result.moves.forEach(m => {
                         if (!mon.moves.includes(m)) mon.moves.push(m);
                     });
                 }
             } else {
-                // Determine side by tooltip position? (Too unreliable for now)
-                // Better to skip update than corrupt data.
+                // Formatting mismatch or unknown mon. Log warning.
+                console.warn(`[ShowdownPredictor] Tooltip ignored for '${result.pokemon}'. Not in myTeam or opponentTeam.`,
+                    'My:', Object.keys(state.myTeam),
+                    'Opp:', Object.keys(state.opponentTeam));
             }
         }
 

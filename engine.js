@@ -49,7 +49,9 @@ const PredictionEngine = (() => {
         // Get relevant stats (using 252 EV, 31 IV, neutral nature as default)
         let atkStat, defStat;
 
-        if (attacker.baseStats) {
+        if (attacker.stats) {
+            atkStat = isPhysical ? attacker.stats.atk : attacker.stats.spa;
+        } else if (attacker.baseStats) {
             const baseAtk = isPhysical ? attacker.baseStats.atk : attacker.baseStats.spa;
             // Assume 252 EVs, 31 IVs, neutral nature (1.0)
             atkStat = calcStat(baseAtk, 252, 31, 1.0, level, false);
@@ -57,7 +59,12 @@ const PredictionEngine = (() => {
             atkStat = 200; // fallback
         }
 
-        if (defender.baseStats) {
+        if (defender.stats) {
+            const statKey = isPhysical ? 'def' : 'spd';
+            // Psyshock check
+            const actualKey = move.name === 'Psyshock' ? 'def' : statKey;
+            defStat = defender.stats[actualKey];
+        } else if (defender.baseStats) {
             const baseDef = isPhysical ? defender.baseStats.def : defender.baseStats.spd;
             // Psyshock uses physical def
             const actualBaseDef = move.name === 'Psyshock' ? defender.baseStats.def : baseDef;
@@ -352,6 +359,7 @@ const PredictionEngine = (() => {
             // Calculate damage to us
             const oppAttacker = {
                 baseStats: oppData.baseStats,
+                stats: oppMon?.stats, // Pass actual stats if available
                 types: oppMon?.types || oppData.types,
                 boosts: oppMon?.boosts || {},
                 ability: oppMon?.ability || oppData.abilities[0],
@@ -360,6 +368,7 @@ const PredictionEngine = (() => {
 
             const myDefender = {
                 baseStats: myData ? myData.baseStats : null,
+                stats: myMon?.stats,
                 types: myMon?.types || (myData ? myData.types : []),
                 boosts: myMon?.boosts || {},
                 ability: myMon?.ability || '',
@@ -488,6 +497,7 @@ const PredictionEngine = (() => {
             // Calculate our damage to their active
             const myAttacker = {
                 baseStats: myData.baseStats,
+                stats: myMon?.stats,
                 types: myMon?.types || myData.types,
                 boosts: myMon?.boosts || {},
                 ability: myMon?.ability || myData.abilities[0],
@@ -496,6 +506,7 @@ const PredictionEngine = (() => {
 
             const oppDefender = {
                 baseStats: oppData.baseStats,
+                stats: oppMon?.stats,
                 types: oppMon?.types || oppData.types,
                 boosts: oppMon?.boosts || {},
                 ability: oppMon?.ability || oppData.abilities[0],
@@ -703,6 +714,7 @@ const PredictionEngine = (() => {
             // 1. Offense Score (Our damage to them)
             const myAttacker = {
                 baseStats: myData.baseStats,
+                stats: mon.stats,
                 types: myData.types,
                 boosts: {}, // assume neutral boosts on switch-in
                 ability: myData.abilities[0], // assume base ability
@@ -710,6 +722,7 @@ const PredictionEngine = (() => {
             };
             const oppDefender = {
                 baseStats: oppData.baseStats,
+                stats: oppMon?.stats,
                 types: oppMon?.types || oppData.types,
                 boosts: oppMon?.boosts || {},
                 ability: oppMon?.ability || oppData.abilities[0],
