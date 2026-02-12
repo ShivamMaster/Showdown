@@ -1,0 +1,495 @@
+/**
+ * styles.css — Glassmorphism overlay styles for Battle Predictor
+ *
+ * Semi-transparent, frosted glass design that overlays the battle UI.
+ * Uses modern CSS features: backdrop-filter, gradients, smooth transitions.
+ */
+
+/* ─── Main Panel ─── */
+
+#showdown-predictor {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  width: 320px;
+  max-height: 85vh;
+  overflow-y: auto;
+  z-index: 99999;
+  font-family: 'Segoe UI', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 12px;
+  color: #e2e8f0;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+}
+
+#showdown-predictor:hover {
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+}
+
+#showdown-predictor.sp-minimized {
+  width: 200px;
+  max-height: none;
+  overflow: visible;
+}
+
+/* Scrollbar */
+#showdown-predictor::-webkit-scrollbar {
+  width: 4px;
+}
+#showdown-predictor::-webkit-scrollbar-track {
+  background: transparent;
+}
+#showdown-predictor::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+
+/* ─── Header ─── */
+
+.sp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: grab;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.1));
+  border-radius: 14px 14px 0 0;
+}
+
+.sp-header:active {
+  cursor: grabbing;
+}
+
+.sp-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  background: linear-gradient(135deg, #a78bfa, #818cf8);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.sp-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sp-btn-minimize {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.sp-btn-minimize:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #e2e8f0;
+}
+
+/* ─── Archetype Badge ─── */
+
+.sp-archetype-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 20px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+
+.sp-arch-ho {
+  background: linear-gradient(135deg, #ef4444, #f97316);
+  color: white;
+}
+
+.sp-arch-stall {
+  background: linear-gradient(135deg, #3b82f6, #06b6d4);
+  color: white;
+}
+
+.sp-arch-balance {
+  background: rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ─── Body ─── */
+
+.sp-body {
+  padding: 0;
+}
+
+/* ─── Sections ─── */
+
+.sp-section {
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.sp-section:last-child {
+  border-bottom: none;
+}
+
+.sp-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #94a3b8;
+  margin-bottom: 8px;
+}
+
+.sp-section-icon {
+  font-size: 13px;
+}
+
+/* ─── Speed Section ─── */
+
+.sp-speed-section {
+  padding: 8px 14px;
+}
+
+.sp-speed-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  transition: all 0.3s;
+}
+
+.sp-speed-safe {
+  background: rgba(34, 197, 94, 0.12);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.sp-speed-danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  animation: pulse-danger 2s ease-in-out infinite;
+}
+
+.sp-speed-tie {
+  background: rgba(251, 191, 36, 0.1);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.2);
+}
+
+.sp-speed-danger-section {
+  background: rgba(239, 68, 68, 0.05);
+}
+
+@keyframes pulse-danger {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* ─── Switch Probability ─── */
+
+.sp-switch-prob, .sp-predicted-move, .sp-pred-damage {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.sp-label {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.sp-value {
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+/* Badges */
+.sp-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 20px;
+  letter-spacing: 0.5px;
+}
+
+.sp-badge-high {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: white;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.3);
+}
+
+.sp-badge-med {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: white;
+}
+
+.sp-badge-low {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+/* ─── Opponent Moves List ─── */
+
+.sp-opp-moves-list {
+  margin-top: 8px;
+}
+
+.sp-opp-move-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 11px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.sp-opp-move-row:last-child {
+  border-bottom: none;
+}
+
+.sp-move-name {
+  flex: 1;
+  font-weight: 500;
+}
+
+.sp-move-prob {
+  color: #94a3b8;
+  font-size: 10px;
+  min-width: 30px;
+  text-align: right;
+}
+
+.sp-move-dmg {
+  color: #94a3b8;
+  font-size: 10px;
+  min-width: 50px;
+  text-align: right;
+}
+
+/* ─── Recommended Move ─── */
+
+.sp-rec-section {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.05), rgba(16, 185, 129, 0.03));
+}
+
+.sp-recommended {
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.15);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.sp-rec-move {
+  font-size: 16px;
+  font-weight: 800;
+  color: #4ade80;
+  margin-bottom: 4px;
+}
+
+.sp-rec-reason {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-bottom: 2px;
+}
+
+.sp-rec-damage {
+  font-size: 11px;
+  font-weight: 600;
+  color: #a7f3d0;
+}
+
+/* All moves */
+.sp-all-moves {
+  margin-top: 4px;
+}
+
+.sp-move-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  margin-bottom: 2px;
+  transition: background 0.2s;
+}
+
+.sp-move-option:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.sp-move-best {
+  background: rgba(34, 197, 94, 0.08) !important;
+  border-left: 2px solid #4ade80;
+}
+
+.sp-move-score {
+  color: #94a3b8;
+  font-size: 10px;
+  min-width: 35px;
+  text-align: right;
+}
+
+/* ─── Damage Values ─── */
+
+.sp-damage-value {
+  font-weight: 700;
+}
+
+.sp-dmg-high {
+  color: #f87171 !important;
+}
+
+.sp-dmg-med {
+  color: #fbbf24 !important;
+}
+
+/* ─── Type Colors ─── */
+
+.sp-type-normal { color: #a8a878; }
+.sp-type-fire { color: #f08030; }
+.sp-type-water { color: #6890f0; }
+.sp-type-electric { color: #f8d030; }
+.sp-type-grass { color: #78c850; }
+.sp-type-ice { color: #98d8d8; }
+.sp-type-fighting { color: #c03028; }
+.sp-type-poison { color: #a040a0; }
+.sp-type-ground { color: #e0c068; }
+.sp-type-flying { color: #a890f0; }
+.sp-type-psychic { color: #f85888; }
+.sp-type-bug { color: #a8b820; }
+.sp-type-rock { color: #b8a038; }
+.sp-type-ghost { color: #705898; }
+.sp-type-dragon { color: #7038f8; }
+.sp-type-dark { color: #705848; }
+.sp-type-steel { color: #b8b8d0; }
+.sp-type-fairy { color: #ee99ac; }
+
+/* ─── Field State ─── */
+
+.sp-field-state {
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.6;
+}
+
+/* ─── Teams Compact ─── */
+
+.sp-teams-compact {
+  font-size: 11px;
+}
+
+.sp-team-row {
+  color: #94a3b8;
+  margin-bottom: 4px;
+}
+
+.sp-team-mon {
+  padding: 4px 8px;
+  border-radius: 6px;
+  margin-bottom: 3px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: all 0.2s;
+}
+
+.sp-team-mon.sp-active {
+  border-color: rgba(99, 102, 241, 0.3);
+  background: rgba(99, 102, 241, 0.06);
+}
+
+.sp-mon-name {
+  font-weight: 700;
+  color: #e2e8f0;
+  margin-right: 6px;
+}
+
+.sp-mon-types {
+  color: #94a3b8;
+  font-size: 10px;
+  margin-right: 6px;
+}
+
+.sp-mon-hp {
+  font-weight: 600;
+  font-size: 10px;
+  color: #4ade80;
+}
+
+.sp-hp-fainted {
+  color: #6b7280 !important;
+  text-decoration: line-through;
+}
+
+.sp-hp-low {
+  color: #f87171 !important;
+}
+
+.sp-hp-med {
+  color: #fbbf24 !important;
+}
+
+.sp-mon-item, .sp-mon-ability {
+  display: inline-block;
+  font-size: 10px;
+  color: #94a3b8;
+  margin-left: 4px;
+}
+
+.sp-mon-moves {
+  font-size: 10px;
+  color: #64748b;
+  margin-top: 2px;
+  font-style: italic;
+}
+
+/* ─── Footer ─── */
+
+.sp-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 10px;
+  color: #64748b;
+}
+
+.sp-turn {
+  font-weight: 700;
+  color: #818cf8;
+}
+
+.sp-status {
+  max-width: 60%;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
