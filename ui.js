@@ -79,15 +79,15 @@ const PredictorUI = (() => {
         <div class="sp-section sp-teams-section">
           <div class="sp-section-header">
             <span class="sp-section-icon">📊</span>
-            <span>Known Info</span>
+            <span>Opponent Team</span>
           </div>
-        <div class="sp-teams-compact" id="sp-teams-compact"></div>
+          <div class="sp-teams-compact" id="sp-teams-compact"></div>
         </div>
 
         <div class="sp-section sp-my-team-section">
           <div class="sp-section-header">
             <span class="sp-section-icon">🛡️</span>
-            <span>My Team (Debug)</span>
+            <span>My Team</span>
           </div>
           <div class="sp-teams-compact" id="sp-my-team-compact"></div>
         </div>

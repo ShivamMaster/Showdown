@@ -36,6 +36,17 @@ const ShowdownScraper = (() => {
         forceSwitch: false   // true if player MUST switch (fainted mon)
     };
 
+    /**
+     * Update player names from DOM
+     * Should be called frequently to ensure we have the correct side info
+     */
+    function updatePlayerNames() {
+        const p1Node = document.querySelector('.trainer-near strong');
+        const p2Node = document.querySelector('.trainer-far strong');
+        if (p1Node) state.myName = p1Node.textContent.trim();
+        if (p2Node) state.opponentName = p2Node.textContent.trim();
+    }
+
     // ─── Battle Log Parser ───
 
     /**
@@ -47,6 +58,9 @@ const ShowdownScraper = (() => {
     function parseBattleLogLine(text) {
         if (!text || text.trim() === '') return;
         const line = text.trim();
+        
+        // Ensure names are up to date
+        updatePlayerNames();
 
         // 1. Determine side using player names if known
         let isOpposingAction = line.includes('The opposing');
@@ -356,21 +370,39 @@ const ShowdownScraper = (() => {
         // 3. Strip Gender icons (♂, ♀)
         cleaned = cleaned.replace(/[♂♀]/g, '');
 
-        // 4. Handle nicknames in log like "Gengar (Gengar)" or "MyNick (Gengar)"
-        // In tooltips, the name is usually just "PokemonName"
-        // In logs, it can be "Nickname (PokemonName)"
+        // 4. Handle nicknames and status/state markers in parens
+        // Common formats:
+        // - "Nickname (RealName)" -> Want RealName
+        // - "RealName (active)" -> Want RealName
+        // - "RealName (fainted)" -> Want RealName
+        // - "RealName (brn)" -> Want RealName
+        
+        // First, remove known status/state markers if they appear in parens
+        const statusMarkers = ['active', 'fainted', 'brn', 'par', 'slp', 'frz', 'tox', 'psn', 'fnt'];
+        statusMarkers.forEach(marker => {
+            const re = new RegExp(`\\(${marker}\\)`, 'gi');
+            cleaned = cleaned.replace(re, '');
+        });
+
+        // Now if we still have parens, it's likely "Nickname (RealName)"
         if (cleaned.includes('(')) {
             const match = cleaned.match(/\((.+?)\)/);
-            if (match) cleaned = match[1];
-            else cleaned = cleaned.split('(')[0];
+            if (match) {
+                // Check if the content inside parens is actually a Pokemon name
+                // If it is, use it. If not (e.g. some other info), keep outer?
+                // Usually Showdown logs are "Nick (Real)".
+                cleaned = match[1];
+            }
         }
 
         cleaned = cleaned.trim();
 
-        // 5. Forme normalization (e.g., Oricorio-Sensu -> Oricorio)
-        // We want to keep the base name for lookups
-        const baseFormes = ['Oricorio', 'Gourgeist', 'Pumpkaboo', 'Vivillon', 'Urshifu'];
-        for (const base of baseFormes) {
+        // 5. Forme normalization
+        // Only normalize forms that are purely cosmetic or have identical competitive profiles
+        // We DO NOT want to normalize regional variants (Alola, Galar, Hisui, Paldea)
+        // or forms with different types/stats (Urshifu, Oricorio, etc.)
+        const cosmeticBases = ['Vivillon']; 
+        for (const base of cosmeticBases) {
             if (cleaned.startsWith(base + '-')) {
                 cleaned = base;
                 break;
@@ -378,7 +410,10 @@ const ShowdownScraper = (() => {
         }
 
         // Strip any remaining ":" or "!" which shouldn't be in a name
-        cleaned = cleaned.replace(/[:!]/g, '').trim();
+        // Exception: "Type: Null"
+        if (cleaned !== 'Type: Null') {
+            cleaned = cleaned.replace(/[:!]/g, '').trim();
+        }
 
         return cleaned;
     }
@@ -392,6 +427,67 @@ const ShowdownScraper = (() => {
         
         // Final sanity check: Is this name a valid Pokemon or at least looks like one?
         if (name.length < 3 || name.includes(' lost ') || name.includes(' health')) return;
+
+        // --- DEDUPLICATION & REFINEMENT LOGIC ---
+
+        // Case 1: We are adding a SPECIFIC form (e.g., "Deoxys-Defense")
+        // Check if a GENERIC form (e.g., "Deoxys") already exists.
+        // If so, it's the same Pokemon. Upgrade it.
+        if (name.includes('-')) {
+            // Find keys that are prefixes of this name (e.g. "Deoxys" is prefix of "Deoxys-Defense")
+            // Or keys that this name starts with
+            const baseKey = Object.keys(team).find(k => name.startsWith(k) && name !== k);
+            if (baseKey) {
+                console.log(`[ShowdownPredictor] Upgrading ${baseKey} -> ${name}`);
+                const oldData = team[baseKey];
+                delete team[baseKey];
+                
+                const baseData = typeof lookupPokemon === 'function' ? lookupPokemon(name) : null;
+                team[name] = {
+                    ...oldData,
+                    name: name,
+                    types: baseData ? baseData.types : oldData.types,
+                    stats: baseData ? baseData.baseStats : oldData.stats,
+                    ability: baseData ? baseData.abilities[0] : oldData.ability
+                };
+                return;
+            }
+        }
+
+        // Case 2: We are adding a GENERIC form (e.g., "Deoxys")
+        // Check if a SPECIFIC form (e.g., "Deoxys-Defense") already exists.
+        // If so, DO NOT add the generic one. Instead, update the specific one with the new data (hp, status).
+        const specificKey = Object.keys(team).find(k => k.startsWith(name + '-'));
+        if (specificKey) {
+            // We found "Deoxys-Defense" when trying to add "Deoxys".
+            // Just treat "Deoxys" as an alias for "Deoxys-Defense"
+            // We don't change the key, but we ensure the member exists (it does)
+            // and we let the caller update HP/Status on the *specific* key.
+            // BUT ensureTeamMember returns void, it just modifies `team`.
+            // So we can't redirect the caller's subsequent writes easily unless we modify the caller.
+            // However, most callers call ensureTeamMember then access team[name].
+            // If we return here, team[name] ("Deoxys") will be undefined, and the caller will fail to update HP.
+            // This is tricky.
+            
+            // Solution: We need to map the generic name to the specific name in the caller, 
+            // OR we just add the generic name as a reference? No, duplication.
+            
+            // Better: We explicitly fix the name in the scraper functions (scrapeHP) BEFORE calling this.
+            // But if we are here, it means we missed it.
+            
+            // Let's try to "Alias" it? No, state is simple object.
+            
+            // If we are strictly "Deoxys", and "Deoxys-Defense" exists:
+            // We should NOT add "Deoxys".
+            // We should Copy the HP/Status from this "Deoxys" update to "Deoxys-Defense"?
+            // We can't know what the caller intends to do (update HP? update Item?).
+            
+            // Compromise: If specific exists, we IGNORE the generic add request.
+            // This prevents duplication. The downside is we might miss an HP update if the HP bar only says "Deoxys".
+            // To fix the HP update, scrapeHP needs to look for specific keys too.
+            console.log(`[ShowdownPredictor] Ignoring generic ${name} because specific ${specificKey} exists.`);
+            return;
+        }
 
         // VISUAL FIRST POLICY:
         // 'visual' source (HP, Tooltip, Icons) can CREATE new members.
@@ -511,8 +607,13 @@ const ShowdownScraper = (() => {
                 }
 
                 if (team) {
-                    ensureTeamMember(team, name, 'visual');
-                    if (team[name]) team[name].hp = hp;
+                    // Check for fuzzy match before ensuring
+                    // If 'Deoxys-Defense' is in team, but name is 'Deoxys', use 'Deoxys-Defense'
+                    const specificKey = Object.keys(team).find(k => k.startsWith(name + '-'));
+                    const actualName = specificKey || name;
+                    
+                    ensureTeamMember(team, actualName, 'visual');
+                    if (team[actualName]) team[actualName].hp = hp;
                 }
                 
                 // Status (poison, burn, etc)
@@ -627,8 +728,8 @@ const ShowdownScraper = (() => {
      */
     function scrapeTeamIcons() {
         // 1. Try Specific Selectors First (Most Reliable)
-        const myIcons = document.querySelectorAll('.trainer-near .teamicons span');
-        const oppIcons = document.querySelectorAll('.trainer-far .teamicons span');
+        const myIcons = document.querySelectorAll('.trainer-near .teamicons span, .trainer-near .teamicons .picon');
+        const oppIcons = document.querySelectorAll('.trainer-far .teamicons span, .trainer-far .teamicons .picon');
 
         if (myIcons.length > 0) {
             myIcons.forEach(icon => processIcon(icon, state.myTeam));
@@ -638,19 +739,28 @@ const ShowdownScraper = (() => {
             oppIcons.forEach(icon => processIcon(icon, state.opponentTeam));
         }
 
-        // 2. Scrape Controls Area (The "Switch" tab area the user mentioned)
-        // Any icons found in .battle-controls are definitely the player's
-        const controlIcons = document.querySelectorAll('.battle-controls .teamicons span, .battle-controls .picon');
+        // 2. Scrape Controls Area (The "Switch" tab area)
+        // Check for party icons in the control panel (often present in Gen 9 random battles)
+        const controlIcons = document.querySelectorAll('.battle-controls .teamicons span, .battle-controls .picon, .movemenu .picon, .switchmenu .picon');
         if (controlIcons.length > 0) {
              controlIcons.forEach(icon => processIcon(icon, state.myTeam));
         }
 
         // 3. Fallback to Geometric Truth if selectors fail
-        if (myIcons.length === 0 && oppIcons.length === 0 && controlIcons.length === 0) {
-            const allIcons = document.querySelectorAll('.teamicons span');
+        if (myIcons.length === 0 && oppIcons.length === 0) {
+            // Find ALL teamicons in the document
+            const allIcons = document.querySelectorAll('.teamicons span, .picon');
+            const windowHeight = window.innerHeight;
+            
             allIcons.forEach(icon => {
+                // Skip if already processed via controlIcons (check if contained in battle-controls)
+                if (icon.closest('.battle-controls') || icon.closest('.switchmenu')) return;
+
                 const rect = icon.getBoundingClientRect();
-                const windowHeight = window.innerHeight;
+                if (rect.height === 0 || rect.width === 0) return; // Invisible
+
+                // Simple geometric check: Top half = Opponent, Bottom half = Player
+                // This works for 99% of Showdown layouts
                 const isTopHalf = rect.top < (windowHeight / 2);
                 const team = isTopHalf ? state.opponentTeam : state.myTeam;
                 processIcon(icon, team);
@@ -659,35 +769,27 @@ const ShowdownScraper = (() => {
     }
 
     function processIcon(icon, team) {
-        const label = icon.getAttribute('aria-label') || icon.getAttribute('title');
+        let label = icon.getAttribute('aria-label') || icon.getAttribute('title');
+        
+        // Fallback: Check for data-tooltip or inner text if no label
+        if (!label && icon.getAttribute('data-tooltip')) {
+            label = icon.getAttribute('data-tooltip');
+        }
+
         if (label) {
             // Clean the label
-            // "Cobalion (active)" -> "Cobalion"
-            // "Not revealed" -> "Not revealed" (blocked later)
-            // "Cobalion (tox)" -> "Cobalion"
-            
-            let name = label;
-            if (name.includes('(')) {
-                name = name.split('(')[0].trim();
-            }
-            
-            // Remove status conditions from name if present
-            const statuses = ['brn', 'par', 'slp', 'frz', 'tox', 'psn', 'fnt'];
-                        statuses.forEach(s => {
-                const re = new RegExp(`\\s${s}$`, 'i');
-                name = name.replace(re, '');
-            });
-
-            name = cleanPokemonName(name);
+            // "Cobalion (active)" -> "Cobalion" via cleanPokemonName
+            let name = cleanPokemonName(label);
             
             if (name) {
                 ensureTeamMember(team, name, 'visual');
                 // Check for fainted status via opacity or class
-                if (icon.style.opacity === '0.4' || icon.classList.contains('fainted')) {
-                    if (team[name]) {
-                        team[name].hp = 0;
-                        team[name].status = 'fnt';
-                    }
+                // .fainted class is standard, but opacity 0.3/0.4 is also common
+                const isFainted = icon.classList.contains('fainted') || icon.style.opacity === '0.3' || icon.style.opacity === '0.4';
+                
+                if (isFainted && team[name]) {
+                    team[name].hp = 0;
+                    team[name].status = 'fnt';
                 }
             }
         }
@@ -802,15 +904,17 @@ const ShowdownScraper = (() => {
 
             if (document.querySelector('.statbar')) {
                 scrapeHP();
-                scrapeTeamIcons();
-                scrapeMoveMenu();
-                scrapeSwitchMenu();
-                
-                chrome.runtime.sendMessage({
-                    type: 'UPDATE_STATE',
-                    payload: state
-                });
             }
+
+            // Always try to scrape these, as they might exist even without statbars (e.g. Team Preview)
+            scrapeTeamIcons();
+            scrapeMoveMenu();
+            scrapeSwitchMenu();
+            
+            chrome.runtime.sendMessage({
+                type: 'UPDATE_STATE',
+                payload: state
+            });
         });
 
         observer.observe(targetNode, config);

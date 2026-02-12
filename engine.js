@@ -451,9 +451,10 @@ const PredictionEngine = (() => {
 
         // Score each move
         const predictions = possibleMoves.map(moveName => {
-            const moveData = lookupMove(moveName);
-            if (moveData.isUnknown) {
+            let moveData = lookupMove(moveName);
+            if (!moveData || moveData.isUnknown) {
                 console.warn(`[ShowdownPredictor] Engine: Unknown move '${moveName}' encountered in predictOpponentMoves.`);
+                if (!moveData) moveData = { name: moveName, bp: 0, type: 'Normal', cat: 'Status', isUnknown: true };
             }
             // Calculate damage to us
             const oppAttacker = {
@@ -599,9 +600,10 @@ const PredictionEngine = (() => {
         }
 
         const recommendations = availableMoves.map(moveName => {
-            const moveData = lookupMove(moveName);
-            if (moveData.isUnknown) {
+            let moveData = lookupMove(moveName);
+            if (!moveData || moveData.isUnknown) {
                 console.warn(`[ShowdownPredictor] Engine: Unknown move '${moveName}' encountered in recommendMove.`);
+                if (!moveData) moveData = { name: moveName, bp: 0, type: 'Normal', cat: 'Status', isUnknown: true };
             }
 
             // Calculate our damage to their active
