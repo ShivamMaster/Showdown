@@ -447,45 +447,9 @@ const PredictorUI = (() => {
 
   function updateTeamsCompact(analysis) {
     const el = document.getElementById('sp-teams-compact');
-    if (!el) return;
-
-    const state = ShowdownScraper.state;
-
-    let html = '<div class="sp-team-row"><strong>Opponent team:</strong></div>';
-    const oppEntries = Object.entries(state.opponentTeam);
-    if (oppEntries.length === 0) {
-      html += '<div class="sp-team-mon">No data yet — hover over Pokémon</div>';
-    } else {
-      oppEntries.forEach(([name, mon]) => {
-        const data = lookupPokemon(name);
-        const types = data ? data.types.join('/') : '???';
-        const movesStr = mon.moves.length > 0 ? mon.moves.join(', ') : 'No moves seen';
-        const hpClass = mon.hp <= 0 ? 'sp-hp-fainted' : mon.hp < 25 ? 'sp-hp-low' : mon.hp < 50 ? 'sp-hp-med' : '';
-        const isActive = name === state.opponentActive ? ' sp-active' : '';
-
-        // Stats string
-        let statsStr = '';
-        if (mon.stats) {
-          statsStr = `<div class="sp-mon-stats" style="font-size:0.75em; opacity:0.8; margin-top:2px;">
-            Atk ${mon.stats.atk} | Def ${mon.stats.def} | SpA ${mon.stats.spa} | SpD ${mon.stats.spd} | Spe ${mon.stats.spe}
-          </div>`;
-        }
-
-        html += `
-          <div class="sp-team-mon${isActive}">
-            <span class="sp-mon-name">${name}</span>
-            <span class="sp-mon-types">${types}</span>
-            <span class="sp-mon-hp ${hpClass}">${Math.round(mon.hp)}%</span>
-            ${mon.item ? `<span class="sp-mon-item">📦 ${mon.item}</span>` : ''}
-            ${mon.ability ? `<span class="sp-mon-ability">⭐ ${mon.ability}</span>` : ''}
-            ${statsStr}
-            <div class="sp-mon-moves">${movesStr}</div>
-          </div>
-        `;
-      });
+    if (el) {
+      el.innerHTML = renderSixSlotGrid(ShowdownScraper.state.opponentTeam);
     }
-
-    el.innerHTML = html;
   }
 
   /**
@@ -500,49 +464,45 @@ const PredictorUI = (() => {
 
   function updateMyTeamCompact(analysis) {
     const el = document.getElementById('sp-my-team-compact');
-    if (!el) return;
-
-    const state = ShowdownScraper.state;
-    // Basic list of my team
-    const myEntries = Object.entries(state.myTeam);
-
-    if (myEntries.length === 0) {
-      el.innerHTML = '<div class="sp-team-mon">No team data found</div>';
-      return;
+    if (el) {
+      el.innerHTML = renderSixSlotGrid(ShowdownScraper.state.myTeam);
     }
+  }
 
-    let html = '';
-    myEntries.forEach(([name, mon]) => {
-      const data = lookupPokemon(name);
-      const types = data ? data.types.join('/') : '???';
-      const movesStr = mon.moves.length > 0 ? mon.moves.join(', ') : '';
-      const hpClass = mon.hp <= 0 ? 'sp-hp-fainted' : mon.hp < 25 ? 'sp-hp-low' : mon.hp < 50 ? 'sp-hp-med' : '';
-      const isActive = name === state.myActive ? ' sp-active' : '';
+  function renderSixSlotGrid(team) {
+    // Create fixed 6 slots
+    let html = '<div class="sp-team-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;">';
+    const mons = Object.values(team);
+    
+    for (let i = 0; i < 6; i++) {
+        const mon = mons[i];
+        if (mon) {
+            // Check for moves, stats, etc.
+            const movesStr = mon.moves.length > 0 ? mon.moves.join(', ') : 'No moves seen';
+            const isActive = false; // We can pass active state if needed
 
-      // Stats string
-      let statsStr = '';
-      if (mon.stats) {
-        statsStr = `<div class="sp-mon-stats" style="font-size:0.75em; opacity:0.8; margin-top:2px;">
-          ${mon.stats.atk}/${mon.stats.def}/${mon.stats.spa}/${mon.stats.spd}/${mon.stats.spe}
-        </div>`;
-      }
-
-      // Simple row
-      html += `
-          <div class="sp-team-mon${isActive}">
-            <div style="display:flex; justify-content:space-between;">
-                <span class="sp-mon-name">${name}</span>
-                <span class="sp-mon-hp ${hpClass}">${Math.round(mon.hp)}%</span>
-            </div>
-            <div style="font-size:0.8em; opacity:0.7">${types}</div>
-            ${mon.item ? `<div style="font-size:0.8em">📦 ${mon.item}</div>` : ''}
-            ${mon.ability ? `<div style="font-size:0.8em">⭐ ${mon.ability}</div>` : ''}
-            ${statsStr}
-            <div class="sp-mon-moves" style="font-size:0.8em">${movesStr}</div>
-          </div>
-        `;
-    });
-    el.innerHTML = html;
+            html += `
+                <div class="sp-team-slot" style="background: rgba(255,255,255,0.1); padding: 4px; border-radius: 4px; font-size: 0.85em; overflow: hidden;">
+                    <div style="font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff;">${mon.name}</div>
+                    <div style="font-size: 0.8em; color: ${mon.hp < 50 ? '#ff6b6b' : '#51cf66'};">${mon.hp.toFixed(0)}%${mon.status ? ' ' + mon.status.toUpperCase() : ''}</div>
+                    <div style="font-size: 0.75em; color: #ccc;">${mon.item ? '📦 ' + mon.item : ''}</div>
+                    <div style="font-size: 0.75em; color: #ccc;">${mon.ability ? '⭐ ' + mon.ability : ''}</div>
+                    <div style="font-size: 0.7em; color: #888; margin-top: 2px; line-height: 1.1;">
+                        ${mon.moves.map(m => `<div>• ${m}</div>`).join('')}
+                    </div>
+                </div>
+            `;
+        } else {
+            // Empty slot
+            html += `
+                <div class="sp-team-slot empty" style="background: rgba(0,0,0,0.2); padding: 4px; border-radius: 4px; min-height: 80px; display: flex; align-items: center; justify-content: center;">
+                    <span style="color: #444; font-size: 1.2em;">?</span>
+                </div>
+            `;
+        }
+    }
+    html += '</div>';
+    return html;
   }
 
   return {

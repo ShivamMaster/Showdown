@@ -92,9 +92,23 @@ const ShowdownScraper = (() => {
             const moveName = moveMatch[2].trim();
             
             if (isOpposingAction) {
-                addMoveToTeam(state.opponentTeam, pokemonName, moveName);
+                if (state.opponentTeam[pokemonName]) {
+                    addMoveToTeam(state.opponentTeam, pokemonName, moveName);
+                } else {
+                    // Log says opponent, but we don't have it visually yet. 
+                    // Should we add it? 
+                    // If we are strict "Visual First", we wait.
+                    // But maybe it just switched in and visual hasn't run yet?
+                    // Let's rely on scrapeHP to catch it in < 100ms.
+                    // BUT, we might lose the move info if we ignore it now.
+                    // Solution: Queue it? Or just add to a 'pending' list?
+                    // Actually, if we add it via ensureTeamMember with 'log', it will be rejected if !team[name].
+                    // So we must NOT call ensureTeamMember inside addMoveToTeam blindly.
+                }
             } else {
-                addMoveToTeam(state.myTeam, pokemonName, moveName);
+                if (state.myTeam[pokemonName]) {
+                    addMoveToTeam(state.myTeam, pokemonName, moveName);
+                }
             }
             return;
         }
@@ -313,7 +327,20 @@ const ShowdownScraper = (() => {
         if (!name) return '';
         
         // AGGRESSIVE: If the name contains UI markers, it's NOT a Pokemon name
-        if (name.includes('Tera Type') || name.includes('Ability:') || name.includes('Item:') || name.includes('Stats:')) {
+        const blocked = [
+            'Tera Type', 'Ability:', 'Item:', 'Stats:', 
+            'active', 'Not revealed', 'tox', 'brn', 'par', 'slp', 'frz', 'fnt',
+            'move', 'Switch', 'Turn', 'Team', 'Opponent'
+        ];
+        
+        // Exact match blocking
+        if (blocked.includes(name.trim())) return '';
+
+        // If the name is literally one of the status conditions or common UI words
+        if (['active', 'fainted', 'tox', 'psn', 'brn', 'par', 'slp', 'frz'].includes(name.toLowerCase())) return '';
+
+        if (blocked.some(b => name.includes(b) && name.length < b.length + 5)) {
+            // If it contains a blocked word and is short, it's probably just that word garbage
             return '';
         }
 
@@ -360,35 +387,56 @@ const ShowdownScraper = (() => {
         return state.opponentTeam.hasOwnProperty(name);
     }
 
-    function ensureTeamMember(team, name) {
+    function ensureTeamMember(team, name, source = 'visual') {
         if (!name) return;
         
         // Final sanity check: Is this name a valid Pokemon or at least looks like one?
         if (name.length < 3 || name.includes(' lost ') || name.includes(' health')) return;
 
+        // VISUAL FIRST POLICY:
+        // 'visual' source (HP, Tooltip, Icons) can CREATE new members.
+        // 'log' source (Battle Log) can ONLY update existing members.
+        if (source === 'log' && !team[name]) {
+            // If the log mentions a mon we don't have, it might be a nickname we missed or it hasn't switched in yet.
+            // But we should NOT create it blindly to avoid duplicates/confusion.
+            // Exception: If we have < 6 members and we are VERY sure? 
+            // No, safer to wait for visual confirmation.
+            return;
+        }
+
         // Anti-duplication: If adding to myTeam, remove from opponentTeam and vice-versa
         if (team === state.myTeam) {
             if (state.opponentTeam[name]) {
-                console.log(`[ShowdownPredictor] Side-Switch: Moving ${name} from OPPONENT to PLAYER`);
-                delete state.opponentTeam[name];
+                // Only move if source is VISUAL (Absolute Truth)
+                if (source === 'visual') {
+                    console.log(`[ShowdownPredictor] Side-Switch: Moving ${name} from OPPONENT to PLAYER (Visual Confirmation)`);
+                    delete state.opponentTeam[name];
+                } else {
+                    // If log says it's mine but visual says it's theirs... Visual wins.
+                    // Ignore this log update for team assignment.
+                    return; 
+                }
             }
         } else {
             if (state.myTeam[name]) {
-                console.log(`[ShowdownPredictor] Side-Switch: Moving ${name} from PLAYER to OPPONENT`);
-                delete state.myTeam[name];
+                if (source === 'visual') {
+                    console.log(`[ShowdownPredictor] Side-Switch: Moving ${name} from PLAYER to OPPONENT (Visual Confirmation)`);
+                    delete state.myTeam[name];
+                } else {
+                    return;
+                }
             }
         }
 
         if (!team[name]) {
             // Check if we already have 6 mons to prevent ghosting/overwriting
             const teamSize = Object.keys(team).length;
-            if (teamSize >= 6 && !team[name]) {
+            if (teamSize >= 6) {
                 console.log(`[ShowdownPredictor] Team Full: Not adding ${name} to ${team === state.myTeam ? 'PLAYER' : 'OPPONENT'} team (already has 6)`);
-                // Find a mon with 0 HP or least info to replace? 
-                // For now, let's just log it. In Randoms, sometimes illusions or nicknames cause > 6.
+                return;
             }
 
-            console.log(`[ShowdownPredictor] New Mon: Adding ${name} to ${team === state.myTeam ? 'PLAYER' : 'OPPONENT'} team`);
+            console.log(`[ShowdownPredictor] New Mon: Adding ${name} to ${team === state.myTeam ? 'PLAYER' : 'OPPONENT'} team (Source: ${source})`);
             
             // Try to get base data for typing/stats
             const baseData = typeof lookupPokemon === 'function' ? lookupPokemon(name) : null;
@@ -410,9 +458,15 @@ const ShowdownScraper = (() => {
     }
 
     function addMoveToTeam(team, pokemonName, moveName) {
-        ensureTeamMember(team, pokemonName);
+        if (!team[pokemonName]) {
+            // If it's a log-based addition, we reject it if the pokemon isn't already there.
+            // This prevents "hallucinating" team members from text.
+            return; 
+        }
+
         const mon = team[pokemonName];
         if (!mon.moves.includes(moveName)) {
+            console.log(`[ShowdownPredictor] New Move: ${pokemonName} used ${moveName}`);
             mon.moves.push(moveName);
         }
     }
@@ -438,27 +492,26 @@ const ShowdownScraper = (() => {
                 const width = hpEl.style.width;
                 const hp = width ? parseFloat(width) : 100;
 
-                const isOpponentSide = bar.closest('.side-1') !== null || bar.classList.contains('rstatbar');
-                const isPlayerSide = bar.closest('.side-0') !== null || bar.classList.contains('lstatbar');
+                // ABSOLUTE GEOMETRIC TRUTH: 
+                // Top half of screen = Opponent
+                // Bottom half of screen = Player
+                const rect = bar.getBoundingClientRect();
+                const windowHeight = window.innerHeight;
+                const isTopHalf = rect.top < (windowHeight / 2);
                 
                 let team = null;
-                if (isOpponentSide) {
+                
+                // Override CSS classes with geometry
+                if (isTopHalf) {
                     team = state.opponentTeam;
                     state.opponentActive = name;
-                } else if (isPlayerSide) {
+                } else {
                     team = state.myTeam;
                     state.myActive = name;
-                } else {
-                    // Final fallback
-                    const rect = bar.getBoundingClientRect();
-                    const isTop = rect.top < window.innerHeight / 2;
-                    team = isTop ? state.opponentTeam : state.myTeam;
-                    if (isTop) state.opponentActive = name;
-                    else state.myActive = name;
                 }
 
                 if (team) {
-                    ensureTeamMember(team, name);
+                    ensureTeamMember(team, name, 'visual');
                     if (team[name]) team[name].hp = hp;
                 }
                 
@@ -525,23 +578,32 @@ const ShowdownScraper = (() => {
     function scrapeSwitchMenu() {
         state.mySwitches = [];
         const switchMenu = document.querySelector('.switchmenu');
-        // Check visibility. Usually offsetParent is good enough for 'display: none'
-        if (!switchMenu || switchMenu.offsetParent === null) {
-            state.forceSwitch = false;
-            return;
-        }
-
-        const switchButtons = switchMenu.querySelectorAll('button');
+        
+        // Always try to find switch buttons even if the menu container isn't obvious
+        // The user mentioned icons "next to the Switch tab", which implies the switch menu buttons
+        const switchButtons = document.querySelectorAll('.switchmenu button, button[name="chooseSwitch"], button[name="chooseTeamPreview"]');
+        
         switchButtons.forEach(btn => {
-            if (btn.name === 'chooseSwitch' || btn.name === 'chooseTeamPreview') {
-                // Valid switch choice
-                const nameText = btn.textContent.trim().split('\n')[0];
-                const name = cleanPokemonName(nameText);
-                if (name) {
+            const text = btn.textContent.trim().split('\n')[0];
+            const name = cleanPokemonName(text);
+            
+            if (name) {
+                // If it's in the switch menu, it is DEFINITELY on my team.
+                // This answers the user's "next to the Switch tab" requirement.
+                ensureTeamMember(state.myTeam, name, 'visual');
+                
+                // If it's a valid switch choice (not active, not fainted usually, but Showdown handles that)
+                if (!btn.disabled) {
                     state.mySwitches.push({ name: name });
                 }
             }
         });
+
+        // Check visibility for forced switch logic
+        if (!switchMenu || switchMenu.offsetParent === null) {
+            state.forceSwitch = false;
+            return;
+        }
 
         // Detect forced switch
         // If switch menu is visible and there is NO "Cancel" button, it's a forced switch
@@ -564,91 +626,105 @@ const ShowdownScraper = (() => {
      * Showdown uses .trainer with .teamicons containing .picon elements
      */
     function scrapeTeamIcons() {
-        // Opponent icons: .side-1 (Top)
-        const oppIcons = document.querySelectorAll('.side-1 .teamicons span, .trainer-far .teamicons span');
-        oppIcons.forEach(icon => {
-            const label = icon.getAttribute('aria-label') || icon.getAttribute('title');
-            if (label) {
-                const name = cleanPokemonName(label);
-                if (name) ensureTeamMember(state.opponentTeam, name);
-            }
-        });
+        // 1. Try Specific Selectors First (Most Reliable)
+        const myIcons = document.querySelectorAll('.trainer-near .teamicons span');
+        const oppIcons = document.querySelectorAll('.trainer-far .teamicons span');
 
-        // My icons: .side-0 (Bottom)
-        const myIcons = document.querySelectorAll('.side-0 .teamicons span, .trainer-near .teamicons span');
-        myIcons.forEach(icon => {
-            const label = icon.getAttribute('aria-label') || icon.getAttribute('title');
-            if (label) {
-                const name = cleanPokemonName(label);
-                if (name) ensureTeamMember(state.myTeam, name);
+        if (myIcons.length > 0) {
+            myIcons.forEach(icon => processIcon(icon, state.myTeam));
+        }
+
+        if (oppIcons.length > 0) {
+            oppIcons.forEach(icon => processIcon(icon, state.opponentTeam));
+        }
+
+        // 2. Scrape Controls Area (The "Switch" tab area the user mentioned)
+        // Any icons found in .battle-controls are definitely the player's
+        const controlIcons = document.querySelectorAll('.battle-controls .teamicons span, .battle-controls .picon');
+        if (controlIcons.length > 0) {
+             controlIcons.forEach(icon => processIcon(icon, state.myTeam));
+        }
+
+        // 3. Fallback to Geometric Truth if selectors fail
+        if (myIcons.length === 0 && oppIcons.length === 0 && controlIcons.length === 0) {
+            const allIcons = document.querySelectorAll('.teamicons span');
+            allIcons.forEach(icon => {
+                const rect = icon.getBoundingClientRect();
+                const windowHeight = window.innerHeight;
+                const isTopHalf = rect.top < (windowHeight / 2);
+                const team = isTopHalf ? state.opponentTeam : state.myTeam;
+                processIcon(icon, team);
+            });
+        }
+    }
+
+    function processIcon(icon, team) {
+        const label = icon.getAttribute('aria-label') || icon.getAttribute('title');
+        if (label) {
+            // Clean the label
+            // "Cobalion (active)" -> "Cobalion"
+            // "Not revealed" -> "Not revealed" (blocked later)
+            // "Cobalion (tox)" -> "Cobalion"
+            
+            let name = label;
+            if (name.includes('(')) {
+                name = name.split('(')[0].trim();
             }
-        });
+            
+            // Remove status conditions from name if present
+            const statuses = ['brn', 'par', 'slp', 'frz', 'tox', 'psn', 'fnt'];
+                        statuses.forEach(s => {
+                const re = new RegExp(`\\s${s}$`, 'i');
+                name = name.replace(re, '');
+            });
+
+            name = cleanPokemonName(name);
+            
+            if (name) {
+                ensureTeamMember(team, name, 'visual');
+                // Check for fainted status via opacity or class
+                if (icon.style.opacity === '0.4' || icon.classList.contains('fainted')) {
+                    if (team[name]) {
+                        team[name].hp = 0;
+                        team[name].status = 'fnt';
+                    }
+                }
+            }
+        }
     }
 
     /**
-     * Scrape tooltip content when a tooltip appears
-     * Showdown tooltips contain detailed info about moves, Pokémon, items, abilities
+     * Scrape Tooltip for detailed info
      */
     function scrapeTooltip() {
         const tooltip = document.querySelector('#tooltipwrapper .tooltip, .tooltip');
         if (!tooltip) return;
 
         const result = {
-            pokemon: '',
-            hp: null,
-            ability: '',
-            item: '',
-            teraType: '',
-            moves: [],
-            stats: {}
+            pokemon: '', hp: null, ability: '', item: '', teraType: '', moves: [], stats: {}
         };
 
-        // Extract Pokémon name from h2
         const h2 = tooltip.querySelector('h2');
         if (h2) {
             const nameText = h2.textContent.trim();
-            
-            // AGGRESSIVE: Reject non-Pokemon names immediately
             if (nameText.includes('Tera Type:') || nameText.includes('Ability:') || nameText.includes('Item:')) {
-                // If this is a sub-header, the Pokemon name is usually the FIRST h2 in the tooltip
                 const firstH2 = tooltip.querySelector('h2');
-                if (firstH2 && firstH2 === h2) return null; // It IS the first h2, so it's not a mon
+                if (firstH2 && firstH2 === h2) return null;
             }
-
             result.pokemon = cleanPokemonName(nameText);
             if (!result.pokemon) return null;
-
-            // Check if this is actually a Move tooltip
             if (typeof lookupMove === 'function' && lookupMove(result.pokemon)) return null;
         }
 
-        // HP
         const hpBar = tooltip.querySelector('.hpbar .hp');
-        if (hpBar) {
-            const width = hpBar.style.width;
-            result.hp = width ? parseFloat(width) : 100;
-        }
+        if (hpBar) result.hp = hpBar.style.width ? parseFloat(hpBar.style.width) : 100;
 
-        // Stats (Atk, Def, etc)
         const statElements = tooltip.querySelectorAll('p');
         statElements.forEach(p => {
             const text = p.textContent;
-            
-            // Ability
-            if (text.includes('Ability:')) {
-                result.ability = text.split('Ability:')[1].trim();
-            }
-            // Item
-            if (text.includes('Item:')) {
-                result.item = text.split('Item:')[1].trim();
-            }
-            // Tera Type
-            if (text.includes('Tera Type:')) {
-                result.teraType = text.split('Tera Type:')[1].trim();
-            }
-
-            // Actual Stats (Base Stats section)
-            // Example: "Atk: 100 / Def: 80 / SpA: 60"
+            if (text.includes('Ability:')) result.ability = text.split('Ability:')[1].trim();
+            if (text.includes('Item:')) result.item = text.split('Item:')[1].trim();
+            if (text.includes('Tera Type:')) result.teraType = text.split('Tera Type:')[1].trim();
             const statMatch = text.match(/(Atk|Def|SpA|SpD|Spe):\s*(\d+)/g);
             if (statMatch) {
                 statMatch.forEach(s => {
@@ -659,39 +735,21 @@ const ShowdownScraper = (() => {
             }
         });
 
-        // Moves
         const moveElements = tooltip.querySelectorAll('.section ul li');
         moveElements.forEach(li => {
             const moveName = li.textContent.replace('•', '').trim();
-            if (moveName && !result.moves.includes(moveName)) {
-                result.moves.push(moveName);
-            }
+            if (moveName && !result.moves.includes(moveName)) result.moves.push(moveName);
         });
 
-        // Update state with tooltip data
         if (result.pokemon) {
-            // 1. CLEAN THE NAME AGAIN (Just in case)
             result.pokemon = cleanPokemonName(result.pokemon);
             if (!result.pokemon) return;
 
-            // 2. DETERMINE SIDE (Aggressive)
-            let team = null;
-            
-            // Check if we are hovering a statbar or trainer side
-            const isOppTooltip = tooltip.closest('.rightbar') || 
-                               tooltip.closest('.trainer-far') || 
-                               tooltip.closest('.side-1') ||
-                               tooltip.classList.contains('opposing-tooltip') ||
-                               (tooltip.offsetLeft > window.innerWidth / 2);
+            const rect = tooltip.getBoundingClientRect();
+            const isTopHalf = rect.top < (window.innerHeight / 2);
+            let team = isTopHalf ? state.opponentTeam : state.myTeam;
 
-            // If it's the opponent's tooltip area, use opponent team
-            if (isOppTooltip) {
-                team = state.opponentTeam;
-            } else {
-                team = state.myTeam;
-            }
-
-            ensureTeamMember(team, result.pokemon);
+            ensureTeamMember(team, result.pokemon, 'visual');
             const mon = team[result.pokemon];
 
             if (mon) {
@@ -707,191 +765,99 @@ const ShowdownScraper = (() => {
                 }
             }
         }
-
         return result;
     }
 
-    // ─── MutationObserver Setup ───
+    // ─── Observer & Loop ───
 
-    let battleLogObserver = null;
-    let tooltipObserver = null;
-    let controlsObserver = null;
+    function startObserving() {
+        const targetNode = document.body;
+        const config = { childList: true, subtree: true, attributes: true, characterData: true };
 
-    /**
-     * Start observing the battle DOM for changes
-     */
-    function startObserving(onUpdate) {
-        // Observe battle log for new lines
-        const battleContainer = document.querySelector('.battle') || document.body;
-        const battleLog = document.querySelector('.battle-log .inner') ||
-            document.querySelector('.battle-log');
-        
-        console.log('[ShowdownPredictor] Scraper: Looking for battle log...', battleLog ? 'Found' : 'Not found');
+        const observer = new MutationObserver((mutations) => {
+            let logUpdated = false;
+            let visualUpdated = false;
 
-        if (battleLog) {
-            battleLogObserver = new MutationObserver((mutations) => {
-                mutations.forEach(mutation => {
-                    mutation.addedNodes.forEach(node => {
-                        if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.TEXT_NODE) {
-                            const text = node.textContent || '';
-                            // Each new div in the battle log is a new event
-                            text.split('\n').forEach(line => {
-                                parseBattleLogLine(line);
-                            });
-                        }
-                    });
-                });
-                // Scrape supplementary data
+            mutations.forEach(mutation => {
+                if (mutation.target.classList && mutation.target.classList.contains('battle-log')) {
+                    logUpdated = true;
+                }
+                if (mutation.target.classList && (mutation.target.classList.contains('statbar') || mutation.target.classList.contains('hpbar'))) {
+                    visualUpdated = true;
+                }
+                if (mutation.target.id === 'tooltipwrapper') {
+                    scrapeTooltip();
+                }
+            });
+
+            if (logUpdated) {
+                const logWindow = document.querySelector('.battle-log');
+                if (logWindow) {
+                    const history = logWindow.querySelectorAll('.battle-history');
+                    // Just grab the last 5 messages to be safe
+                    const recent = Array.from(history).slice(-5);
+                    recent.forEach(el => parseBattleLogLine(el.textContent));
+                }
+            }
+
+            if (document.querySelector('.statbar')) {
                 scrapeHP();
                 scrapeTeamIcons();
-                state.battleActive = true;
-                if (onUpdate) onUpdate(state);
-            });
-
-            battleLogObserver.observe(battleLog, {
-                childList: true,
-                subtree: true,
-                characterData: true
-            });
-        }
-
-        // Observe tooltips appearing/disappearing
-        const tooltipWrapper = document.querySelector('#tooltipwrapper') || document.body;
-        tooltipObserver = new MutationObserver((mutations) => {
-            const tooltip = document.querySelector('#tooltipwrapper .tooltip, .tooltip');
-            if (tooltip) {
-                console.log('[ShowdownPredictor] Scraper: Tooltip detected');
-                scrapeTooltip();
-                if (onUpdate) onUpdate(state);
+                scrapeMoveMenu();
+                scrapeSwitchMenu();
+                
+                chrome.runtime.sendMessage({
+                    type: 'UPDATE_STATE',
+                    payload: state
+                });
             }
         });
 
-        tooltipObserver.observe(tooltipWrapper, {
-            childList: true,
-            subtree: true,
-            attributes: true
-        });
-
-        // Observe move/switch menu changes
-        const controls = document.querySelector('.battle-controls') || document.body;
-        controlsObserver = new MutationObserver(() => {
-            scrapeMoveMenu();
-            scrapeSwitchMenu();
-            if (onUpdate) onUpdate(state);
-        });
-
-        controlsObserver.observe(controls, {
-            childList: true,
-            subtree: true
-        });
-
-        console.log('[ShowdownPredictor] Scraper: Observers started');
+        observer.observe(targetNode, config);
+        console.log('[ShowdownPredictor] Observer started');
     }
 
-    /**
-     * Stop all observers
-     */
-    function stopObserving() {
-        if (battleLogObserver) battleLogObserver.disconnect();
-        if (tooltipObserver) tooltipObserver.disconnect();
-        if (controlsObserver) controlsObserver.disconnect();
-    }
-
-    /**
-     * Initial scan of the current battle state
-     */
     function initialScan() {
-        console.log('[ShowdownPredictor] Scraper: Starting initial scan');
+        console.log('[ShowdownPredictor] Performing initial scan...');
         
-        // 1. Definitive source of truth for "Me": trainer-near
-        const nearTrainer = document.querySelector('.trainer-near strong');
-        if (nearTrainer) {
-            state.myName = nearTrainer.textContent.trim().replace(/^☆/, '').replace(/^[^a-zA-Z0-9]+/, '');
-        }
+        const p1Node = document.querySelector('.trainer-near strong');
+        const p2Node = document.querySelector('.trainer-far strong');
+        if (p1Node) state.myName = p1Node.textContent.trim();
+        if (p2Node) state.opponentName = p2Node.textContent.trim();
+        
+        console.log(`[ShowdownPredictor] Player: ${state.myName}, Opponent: ${state.opponentName}`);
 
-        // 2. Detect opponent from header
-        const header = document.querySelector('.battle-log .inner h2');
-        if (header && header.textContent.includes(' vs. ')) {
-            const parts = header.textContent.split(' vs. ');
-            const p1 = parts[0].trim().replace(/^☆/, '').replace(/^[^a-zA-Z0-9]+/, '');
-            const p2 = parts[1].trim().replace(/^☆/, '').replace(/^[^a-zA-Z0-9]+/, '');
-            
-            if (state.myName) {
-                // If we know who we are, the other one is the opponent
-                if (state.myName.toLowerCase() === p1.toLowerCase()) {
-                    state.opponentName = p2;
-                } else {
-                    state.opponentName = p1;
-                }
-            } else {
-                // Fallback if nearTrainer failed
-                state.opponentName = p1;
-                state.myName = p2;
-            }
-        }
-
-        // 3. Fallback for opponent name
-        if (!state.opponentName) {
-            const farTrainer = document.querySelector('.trainer-far strong');
-            if (farTrainer) state.opponentName = farTrainer.textContent.trim().replace(/^☆/, '').replace(/^[^a-zA-Z0-9]+/, '');
-        }
-
-        console.log(`[ShowdownPredictor] Scraper: Detected players - Me: ${state.myName}, Opponent: ${state.opponentName}`);
-
-        // 2. Parse existing battle log
-        const logLines = document.querySelectorAll('.battle-log .inner div, .battle-log .inner h2, .battle-log .battle-history');
-        console.log(`[ShowdownPredictor] Scraper: Found ${logLines.length} log lines for initial scan`);
-        logLines.forEach(el => {
-            const text = el.textContent || '';
-            text.split('\n').forEach(line => parseBattleLogLine(line));
-        });
-
-        // 3. Scrape current state
         scrapeHP();
+        scrapeTeamIcons();
         scrapeMoveMenu();
         scrapeSwitchMenu();
-        scrapeTeamIcons();
 
-        console.log('[ShowdownPredictor] Scraper: Initial scan complete', state);
+        const logWindow = document.querySelector('.battle-log');
+        if (logWindow) {
+            const history = logWindow.querySelectorAll('.battle-history');
+            history.forEach(el => parseBattleLogLine(el.textContent));
+        }
     }
 
-    /**
-     * Reset state for a new battle
-     */
-    function reset() {
-        state.myTeam = {};
-        state.opponentTeam = {};
-        state.myActive = null;
-        state.opponentActive = null;
-        state.myName = null;
-        state.opponentName = null;
-        state.field = {
-            weather: null, terrain: null,
-            myHazards: { stealthRock: false, spikes: 0, toxicSpikes: 0, stickyWeb: false },
-            opponentHazards: { stealthRock: false, spikes: 0, toxicSpikes: 0, stickyWeb: false },
-            trickRoom: false,
-            tailwind: { my: false, opponent: false }
-        };
-        state.turnNumber = 0;
-        state.myMoves = [];
-        state.mySwitches = [];
-        state.mySwitches = [];
-        state.battleActive = false;
-        state.forceSwitch = false;
+    // ─── Initialization ───
+
+    function init() {
+        const checkForBattle = setInterval(() => {
+            if (document.querySelector('.statbar')) {
+                clearInterval(checkForBattle);
+                state.battleActive = true;
+                initialScan();
+                startObserving();
+            }
+        }, 1000);
     }
 
-    // Public API
     return {
-        state,
-        startObserving,
-        stopObserving,
-        initialScan,
-        scrapeHP,
-        scrapeMoveMenu,
-        scrapeSwitchMenu,
-        scrapeTooltip,
-        scrapeTeamIcons,
-        parseBattleLogLine,
-        reset
+        init: init,
+        getState: () => state
     };
+
 })();
+
+ShowdownScraper.init();
+ 
