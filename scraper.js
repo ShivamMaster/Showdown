@@ -30,7 +30,8 @@ const ShowdownScraper = (() => {
         mySwitches: [],     // available switches [{ name, hp }]
         lastLog: '',
         battleActive: false,
-        myPlayerIndex: null  // 'p1' or 'p2'
+        myPlayerIndex: null, // 'p1' or 'p2'
+        forceSwitch: false   // true if player MUST switch (fainted mon)
     };
 
     // ─── Battle Log Parser ───
@@ -387,14 +388,35 @@ const ShowdownScraper = (() => {
      */
     function scrapeSwitchMenu() {
         state.mySwitches = [];
-        const switchButtons = document.querySelectorAll('.switchmenu button');
+        const switchMenu = document.querySelector('.switchmenu');
+        if (!switchMenu) return;
+
+        const switchButtons = switchMenu.querySelectorAll('button');
         switchButtons.forEach(btn => {
-            if (btn.disabled) return;
-            const name = btn.textContent.trim().split('\n')[0];
-            if (name) {
-                state.mySwitches.push({ name: cleanPokemonName(name) });
+            if (btn.name === 'chooseSwitch' || btn.name === 'chooseTeamPreview') {
+                // Valid switch choice
+                const nameText = btn.textContent.trim().split('\n')[0];
+                const name = cleanPokemonName(nameText);
+                if (name) {
+                    state.mySwitches.push({ name: name });
+                }
             }
         });
+
+        // Detect forced switch
+        // If switch menu is visible and there is NO "Cancel" button, it's a forced switch
+        const cancelButton = switchMenu.querySelector('button[name="closeSwitch"]');
+        const hasSwitchOptions = state.mySwitches.length > 0;
+
+        // Also check prompt text for "Switch" to be sure
+        const prompt = document.querySelector('.whatdo');
+        const isSwitchPrompt = prompt && (prompt.textContent.includes('Switch') || prompt.textContent.includes('send out'));
+
+        if (hasSwitchOptions && !cancelButton) {
+            state.forceSwitch = true;
+        } else {
+            state.forceSwitch = false;
+        }
     }
 
     /**
@@ -483,20 +505,34 @@ const ShowdownScraper = (() => {
 
         // Update state with tooltip data
         if (result.pokemon) {
-            // Try to determine if this is opponent or player
-            const isOpp = state.opponentTeam[result.pokemon] || !state.myTeam[result.pokemon];
-            const team = isOpp ? state.opponentTeam : state.myTeam;
+            // STRICT CHECK: Only update if we know whose Pokémon it is.
+            // Do NOT guess. Rely on scrapeHP to populate teams first.
+            let isOpp = false;
+            let found = false;
 
-            ensureTeamMember(team, result.pokemon);
-            const mon = team[result.pokemon];
+            if (state.myTeam[result.pokemon]) {
+                isOpp = false;
+                found = true;
+            } else if (state.opponentTeam[result.pokemon]) {
+                isOpp = true;
+                found = true;
+            }
 
-            if (result.hp !== null) mon.hp = result.hp;
-            if (result.ability) mon.ability = result.ability;
-            if (result.item) mon.item = result.item;
-            if (result.moves.length > 0) {
-                result.moves.forEach(m => {
-                    if (!mon.moves.includes(m)) mon.moves.push(m);
-                });
+            if (found) {
+                const team = isOpp ? state.opponentTeam : state.myTeam;
+                const mon = team[result.pokemon];
+
+                if (result.hp !== null) mon.hp = result.hp;
+                if (result.ability) mon.ability = result.ability;
+                if (result.item) mon.item = result.item;
+                if (result.moves.length > 0) {
+                    result.moves.forEach(m => {
+                        if (!mon.moves.includes(m)) mon.moves.push(m);
+                    });
+                }
+            } else {
+                // Determine side by tooltip position? (Too unreliable for now)
+                // Better to skip update than corrupt data.
             }
         }
 
@@ -630,7 +666,9 @@ const ShowdownScraper = (() => {
         state.turnNumber = 0;
         state.myMoves = [];
         state.mySwitches = [];
+        state.mySwitches = [];
         state.battleActive = false;
+        state.forceSwitch = false;
     }
 
     // Public API

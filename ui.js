@@ -191,7 +191,11 @@ const PredictorUI = (() => {
     updateSpeedAnalysis(analysis.speedAnalysis);
 
     // Recommendations
-    updateRecommendations(analysis.recommendations);
+    updateRecommendations(
+      analysis.recommendations,
+      analysis.switchRecommendations,
+      analysis.isForcedSwitch
+    );
 
     // Field state
     updateFieldState(analysis.field);
@@ -278,45 +282,118 @@ const PredictorUI = (() => {
     }
   }
 
-  function updateRecommendations(recs) {
+  function updateRecommendations(recs, switchRecs, isForced) {
     const moveEl = document.getElementById('sp-rec-move');
     const reasonEl = document.getElementById('sp-rec-reason');
     const dmgEl = document.getElementById('sp-rec-damage');
     const allMovesEl = document.getElementById('sp-all-moves');
 
-    if (!recs || recs.length === 0) {
-      if (moveEl) moveEl.textContent = '—';
-      if (reasonEl) reasonEl.textContent = 'No recommendations available';
-      if (dmgEl) dmgEl.textContent = '';
-      if (allMovesEl) allMovesEl.innerHTML = '';
+    // Reset fields
+    if (moveEl) moveEl.textContent = '—';
+    if (reasonEl) reasonEl.textContent = 'Analyzing...';
+    if (dmgEl) dmgEl.textContent = '';
+    if (allMovesEl) allMovesEl.innerHTML = '';
+
+    // 1. Forced Switch (Revenge Kill)
+    if (isForced) {
+      if (reasonEl) reasonEl.innerHTML = '<span style="color:#FF5252; font-weight:bold">REVENGE KILLER NEEDED</span>';
+
+      if (switchRecs && switchRecs.length > 0) {
+        const topSwitch = switchRecs[0];
+        if (moveEl) moveEl.innerHTML = `Switch to <span style="color: #4CAF50">${topSwitch.name}</span>`;
+        if (dmgEl) dmgEl.innerHTML = `<small>${topSwitch.reasons.join(', ')}</small>`;
+
+        // Show other options
+        if (allMovesEl) {
+          allMovesEl.innerHTML = switchRecs.map(s =>
+            `<div class="sp-rec-row">
+              <span>Switch: ${s.name}</span>
+              <span>${s.score} (${s.reasons[0]})</span>
+             </div>`
+          ).join('');
+        }
+      } else {
+        if (moveEl) moveEl.textContent = 'Any (No clear best)';
+        if (dmgEl) dmgEl.textContent = 'No safe switch found';
+      }
       return;
     }
 
-    const topRec = recs[0];
+    // 2. Normal Turn - Check if we should switch
+    let bestAction = null;
+    let isSwitch = false;
 
-    if (moveEl) moveEl.textContent = topRec.name;
-    if (reasonEl) reasonEl.textContent = topRec.reason || 'Best damage output';
-    if (dmgEl) {
-      const dmg = topRec.damage;
-      dmgEl.textContent = dmg.max > 0 ? `${dmg.min}-${dmg.max}% damage` : 'Status move';
+    const topMove = recs && recs.length > 0 ? recs[0] : null;
+    const topSwitch = switchRecs && switchRecs.length > 0 ? switchRecs[0] : null;
+
+    // Threshold: Switch needs to be significantly better than staying in
+    // or stay in if move is really good
+    if (topMove) {
+      bestAction = topMove;
     }
 
-    // All move options
+    // If switch score is much higher than move score, recommend switch
+    // e.g. move score 60 (2HKO), switch score 90 (OHKO + faster)
+    if (topSwitch && topMove) {
+      if (topSwitch.score > topMove.score + 15) {
+        bestAction = topSwitch;
+        isSwitch = true;
+      }
+    } else if (!topMove && topSwitch) {
+      // No valid moves (maybe choiced into disabled move?), suggest switch
+      bestAction = topSwitch;
+      isSwitch = true;
+    }
+
+    if (!bestAction) {
+      if (reasonEl) reasonEl.textContent = 'No recommendations available';
+      return;
+    }
+
+    // Render Best Action
+    if (isSwitch) {
+      if (moveEl) moveEl.innerHTML = `Switch to <span style="color: #2196F3">${bestAction.name}</span>`;
+      if (reasonEl) reasonEl.textContent = 'Better matchup available';
+      if (dmgEl) dmgEl.innerHTML = `<small>${bestAction.reasons.join(', ')}</small>`;
+    } else {
+      if (moveEl) moveEl.textContent = bestAction.name;
+      if (reasonEl) reasonEl.textContent = bestAction.reason || 'Best damage output';
+      if (dmgEl) {
+        const dmg = bestAction.damage;
+        if (dmg) dmgEl.textContent = dmg.max > 0 ? `${dmg.min}-${dmg.max}% (Eff: ${dmg.effectiveness}x)` : 'Status move';
+      }
+    }
+
+    // All options list (Moves + Top Switch)
     if (allMovesEl) {
-      allMovesEl.innerHTML = recs.map((r, i) => {
-        const moveInfo = lookupMove(r.name);
-        const typeClass = moveInfo ? `sp-type-${moveInfo.type.toLowerCase()}` : '';
-        const isTop = i === 0;
-        const dmgText = r.damage.max > 0 ? `${r.damage.min}-${r.damage.max}%` : 'Status';
-        const effText = r.damage.effectiveness > 1 ? ' ⬆' : r.damage.effectiveness < 1 && r.damage.effectiveness > 0 ? ' ⬇' : r.damage.effectiveness === 0 ? ' ∅' : '';
-        return `
-          <div class="sp-move-option ${isTop ? 'sp-move-best' : ''}">
-            <span class="sp-move-name ${typeClass}">${r.name}</span>
-            <span class="sp-move-score">${r.score}pts</span>
-            <span class="sp-move-dmg">${dmgText}${effText}</span>
-          </div>
-        `;
-      }).join('');
+      let html = '';
+
+      // Add top switch if valid and not already chosen as primary
+      if (topSwitch && !isSwitch && topSwitch.score > 45) {
+        html += `<div class="sp-rec-row" style="border-left: 3px solid #2196F3; padding-left: 5px; background: rgba(33, 150, 243, 0.1);">
+              <span>Switch: ${topSwitch.name}</span>
+              <span>${topSwitch.score}</span>
+             </div>`;
+      }
+
+      if (recs) {
+        html += recs.map((r, i) => {
+          const moveInfo = lookupMove(r.name);
+          const typeClass = moveInfo ? `sp-type-${moveInfo.type.toLowerCase()}` : '';
+          const isTop = (i === 0); // Always highlight top move in list
+          const dmgText = r.damage.max > 0 ? `${r.damage.min}-${r.damage.max}%` : 'Status';
+          const label = isTop ? ' <small style="opacity:0.8">(Best Move)</small>' : '';
+
+          return `
+            <div class="sp-move-option ${isTop ? 'sp-move-best' : ''}">
+              <span class="sp-move-name ${typeClass}">${r.name}${label}</span>
+              <span class="sp-move-score">${r.score}pts</span>
+              <span class="sp-move-dmg">${dmgText}</span>
+            </div>
+          `;
+        }).join('');
+      }
+      allMovesEl.innerHTML = html;
     }
   }
 

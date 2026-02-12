@@ -179,7 +179,49 @@ assert(analysis.speedAnalysis !== undefined, 'Has speed analysis');
 assert(analysis.oppArchetype !== undefined, 'Has archetype: ' + analysis.oppArchetype);
 assert(analysis.turnNumber === 3, 'Turn number correct');
 
-// ─── Summary ───
+
+// ─── Test 11: Switch Recommendation ───
+console.log('\\n🔄 Switch Recommendation');
+const stateRevenge = {
+  myActive: 'Garchomp', opponentActive: 'Dragapult',
+  myTeam: {
+    'Garchomp': { types: ['Dragon', 'Ground'], moves: [], hp: 0, fainted: true, baseStats: {spe: 102} },
+    'Weavile': { types: ['Dark', 'Ice'], moves: ['Ice Shard', 'Knock Off'], hp: 100, baseStats: { spe: 125, atk: 120, def: 65, spd: 85, hp: 70 }, abilities: ['Pressure'] },
+    'Torkoal': { types: ['Fire'], moves: ['Lava Plume'], hp: 100, baseStats: { spe: 20, def: 140, atk: 85, spa: 85, spd: 70, hp: 70 }, abilities: ['Drought'] }
+  },
+  opponentTeam: {
+    'Dragapult': { types: ['Dragon', 'Ghost'], moves: ['Shadow Ball'], hp: 60, baseStats: { spe: 142, spa: 100, def: 75, spd: 75, hp: 88, atk: 120 }, abilities: ['Clear Body', 'Infiltrator'] }
+  },
+  field: { weather: null, terrain: null, trickRoom: false }
+};
+
+const recsRev = PredictionEngine.recommendSwitch(stateRevenge, true); // isForced = true
+assert(recsRev.length > 0, 'Should recommend switches');
+if (recsRev.length > 0) {
+  assert(recsRev[0].name === 'Weavile', 'Weavile should be top switch (Type Adv/Damage) vs Dragapult. Got: ' + recsRev[0].name);
+  console.log('  Top Switch: ' + recsRev[0].name + ' Score: ' + recsRev[0].score + ' Reasons: ' + recsRev[0].reasons.join(', '));
+}
+
+const statePivot = {
+  // Garchomp vs Weavile (Garchomp 4x weak to Ice). Should switch to Torkoal (Fire resists Ice).
+  myActive: 'Garchomp', opponentActive: 'Weavile',
+  myTeam: {
+    'Garchomp': { types: ['Dragon', 'Ground'], moves: ['Earthquake'], hp: 100, baseStats: { spe: 102 }, fainted: false },
+    'Torkoal': { types: ['Fire'], moves: ['Lava Plume'], hp: 100, baseStats: { spe: 20, def: 140, hp: 70 }, abilities: ['Drought'] }
+  },
+  opponentTeam: {
+    'Weavile': { types: ['Dark', 'Ice'], moves: ['Ice Spinner'], hp: 100, baseStats: { spe: 125, atk: 120 } }
+  },
+  field: { weather: null, terrain: null, trickRoom: false }
+};
+
+const recsPivot = PredictionEngine.recommendSwitch(statePivot, false); // isForced = false
+if (recsPivot.length > 0) {
+    const topPivot = recsPivot[0];
+    assert(topPivot.name === 'Torkoal', 'Torkoal should be suggested switch vs Weavile. Got: ' + topPivot.name);
+    console.log('  Pivot Suggestion: ' + topPivot.name + ' Score: ' + topPivot.score + ' Reasons: ' + topPivot.reasons.join(', '));
+}
+
 console.log('\\n' + '═'.repeat(40));
 console.log('Results: ' + passed + ' passed, ' + failed + ' failed');
 console.log('═'.repeat(40));

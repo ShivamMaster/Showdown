@@ -669,6 +669,189 @@ const PredictionEngine = (() => {
         };
     }
 
+    // ─── Switch Recommendation ───
+
+    /**
+     * Recommend the best switch-in candidates
+     * @param {object} state
+     * @param {boolean} isForced - If true, active fainted (revenge kill scenario)
+     */
+    function recommendSwitch(state, isForced) {
+        const oppActive = state.opponentActive;
+        if (!oppActive) return [];
+
+        const oppMon = state.opponentTeam[oppActive];
+        const oppData = lookupPokemon(oppActive);
+        if (!oppData) return [];
+
+        // Candidates: team members that are NOT active and NOT fainted
+        const candidates = Object.entries(state.myTeam)
+            .filter(([name, mon]) => {
+                // In forced switch, active is fainted, so we filter it out by name or HP
+                // In normal switch, active is alive, so filter by name
+                if (name === state.myActive) return false;
+                return mon.hp > 0 && !mon.fainted;
+            });
+
+        const recommendations = candidates.map(([name, mon]) => {
+            const myData = lookupPokemon(name);
+            if (!myData) return null;
+
+            let score = 50; // Base score
+            let reasons = [];
+
+            // 1. Offense Score (Our damage to them)
+            const myAttacker = {
+                baseStats: myData.baseStats,
+                types: myData.types,
+                boosts: {}, // assume neutral boosts on switch-in
+                ability: myData.abilities[0], // assume base ability
+                item: mon.item || ''
+            };
+            const oppDefender = {
+                baseStats: oppData.baseStats,
+                types: oppMon?.types || oppData.types,
+                boosts: oppMon?.boosts || {},
+                ability: oppMon?.ability || oppData.abilities[0],
+                item: oppMon?.item || '',
+                hp: oppMon?.hp || 100
+            };
+
+            // Find our best move against them
+            let bestDmg = 0;
+            let bestMoveName = '';
+
+            // Use common moves if we don't know moves, or known moves
+            const movesToCheck = mon.moves.length > 0 ? mon.moves : (myData.commonSets?.[0]?.moves || ['Tackle']);
+
+            for (const moveName of movesToCheck) {
+                const moveData = lookupMove(moveName);
+                if (moveData && !moveData.isUnknown) {
+                    const dmg = calculateDamage(myAttacker, oppDefender, moveData, state.field);
+                    if (dmg.max > bestDmg) {
+                        bestDmg = dmg.max;
+                        bestMoveName = moveName;
+                    }
+                }
+            }
+
+            if (bestDmg >= oppMon?.hp) {
+                score += 40;
+                reasons.push('Likely OHKO');
+            } else if (bestDmg >= 50) {
+                score += 25;
+                reasons.push('Significant damage');
+            } else if (bestDmg >= 30) {
+                score += 10;
+                reasons.push('Decent damage');
+            } else {
+                score -= 10;
+            }
+
+            // 2. Defense Score (Incoming damage)
+            // If forced switch (revenge kill), we come in safely, so defense is less critical but still important for next turn
+            // If normal switch, we TAKE A HIT, so defense is CRITICAL.
+
+            // Simulate opponent's best move against us
+            const oppAttacker = {
+                baseStats: oppData.baseStats,
+                types: oppMon?.types || oppData.types,
+                boosts: oppMon?.boosts || {},
+                ability: oppMon?.ability || oppData.abilities[0],
+                item: oppMon?.item || ''
+            };
+            const myDefender = {
+                baseStats: myData.baseStats,
+                types: myData.types,
+                boosts: {},
+                ability: myData.abilities[0],
+                item: mon.item || '',
+                hp: mon.hp || 100
+            };
+
+            // Predict their moves (or use all known)
+            let maxIncomingDmg = 0;
+            const oppMovesToCheck = oppMon?.moves?.length > 0 ? oppMon.moves :
+                (oppData.commonSets?.[0]?.moves || ['Tackle']);
+
+            for (const moveName of oppMovesToCheck) {
+                const moveData = lookupMove(moveName);
+                if (moveData && !moveData.isUnknown) {
+                    const dmg = calculateDamage(oppAttacker, myDefender, moveData, state.field);
+                    if (dmg.max > maxIncomingDmg) maxIncomingDmg = dmg.max;
+                }
+            }
+
+            if (isForced) {
+                // Revenge Kill Scenario
+                // We enter safely. Speed is KING.
+                const mySpeed = getSpeedRange(name).max;
+                const oppSpeed = getSpeedRange(oppActive).max;
+
+                if (mySpeed > oppSpeed) {
+                    score += 30;
+                    reasons.push('Faster');
+                } else if (mySpeed < oppSpeed) {
+                    score -= 15;
+                    reasons.push('Slower');
+                    // If slower and they hit hard, risk of getting KO'd before attacking
+                    if (maxIncomingDmg >= 80) {
+                        score -= 30;
+                        reasons.push('Risk of OHKO');
+                    }
+                }
+
+                // If we wall them, good
+                if (maxIncomingDmg < 30) {
+                    score += 15;
+                    reasons.push('Walls opponent');
+                }
+
+            } else {
+                // Normal Switch Scenario (Pivot)
+                // We take a hit on entry. Valid only if we resist well.
+                if (maxIncomingDmg < 25) {
+                    score += 40;
+                    reasons.push('Resists incoming');
+                } else if (maxIncomingDmg < 50) {
+                    score += 10;
+                } else {
+                    score -= 30; // Taking too much damage on switch
+                    reasons.push('Takes heavy damage');
+                }
+
+                // Speed still matters for subsequent turns
+                const mySpeed = getSpeedRange(name).max;
+                const oppSpeed = getSpeedRange(oppActive).max;
+                if (mySpeed > oppSpeed) {
+                    score += 10;
+                    reasons.push('Faster');
+                }
+            }
+
+            // Type Synergy
+            if (isWeakToSTAB(myData.types, oppData.types)) {
+                score -= 20;
+                reasons.push('Weak to STAB');
+            } else if (resistsSTAB(myData.types, oppData.types)) {
+                score += 15;
+                reasons.push('Resists STAB');
+            }
+
+            return {
+                name,
+                score,
+                reasons,
+                maxIncomingDmg,
+                bestDmg
+            };
+        }).filter(r => r !== null);
+
+        // Sort by score
+        recommendations.sort((a, b) => b.score - a.score);
+        return recommendations;
+    }
+
     // ─── Full Analysis ───
 
     /**
@@ -678,18 +861,27 @@ const PredictionEngine = (() => {
     function analyze(state) {
         const switchPrediction = predictSwitch(state);
         const oppMoves = predictOpponentMoves(state);
-        const recommendations = recommendMove(state);
-        const speedAnalysis = analyzeSpeed(state);
         const oppArchetype = detectArchetype(state.opponentTeam);
         const myArchetype = detectArchetype(state.myTeam);
+
+        // Determine if we are likely in a forced switch state (active fainted)
+        const myActiveMon = state.myTeam[state.myActive];
+        // Use scraper's forceSwitch flag first, then fallback to HP check
+        const isForcedSwitch = state.forceSwitch || (myActiveMon && myActiveMon.hp <= 0);
+
+        const recommendations = recommendMove(state);
+        const speedAnalysis = analyzeSpeed(state);
+        const switchRecommendations = recommendSwitch(state, isForcedSwitch);
 
         return {
             switchPrediction,
             oppMoves,
             recommendations,
+            switchRecommendations,
             speedAnalysis,
             oppArchetype,
             myArchetype,
+            isForcedSwitch,
             turnNumber: state.turnNumber,
             myActive: state.myActive,
             opponentActive: state.opponentActive,
@@ -703,6 +895,7 @@ const PredictionEngine = (() => {
         predictSwitch,
         predictOpponentMoves,
         recommendMove,
+        recommendSwitch,
         analyzeSpeed,
         analyze
     };
